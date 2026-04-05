@@ -1,0 +1,30 @@
+{
+  "roots": [
+    {
+      "path": "~/Github Personal",
+      "mode": "children"
+    },
+    {
+      "path": "~/Projects/my-repo",
+      "mode": "self"
+    }
+  ],
+  "git": {
+    "fetchBeforeCompare": true,
+    "fetchTimeoutSeconds": 30
+  },
+  "notifications": {
+    "enabled": true,
+    "mode": "behindAndDirty",
+    "minimumIntervalMinutes": 30
+  },
+  "desktop": {
+    "scanIntervalMinutes": 10
+  },
+  "state": {
+    "filePath": "state.json"
+  },
+  "logging": {
+    "filePath": "repo-monitor-runtime.log"
+  }
+}

@@ -1,0 +1,29 @@
+name: RepoMonitor
+options:
+  bundleIdPrefix: com.humsweet
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  generateEmptyDirectories: true
+
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+targets:
+  RepoMonitor:
+    type: application
+    platform: macOS
+    sources:
+      - RepoMonitor
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.humsweet.RepoMonitor
+        INFOPLIST_FILE: RepoMonitor/Info.plist
+        CODE_SIGN_ENTITLEMENTS: RepoMonitor/RepoMonitor.entitlements
+        MARKETING_VERSION: "1.0.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: false
+        COMBINE_HIDPI_IMAGES: true
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
