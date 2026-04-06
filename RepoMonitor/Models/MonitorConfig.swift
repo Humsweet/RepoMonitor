@@ -59,6 +59,41 @@ struct RootEntry: Codable, Identifiable {
 struct GitConfig: Codable {
     var fetchBeforeCompare: Bool = true
     var fetchTimeoutSeconds: Int = 30
+    var hostCredentials: [GitHostCredential] = []
+
+    init(
+        fetchBeforeCompare: Bool = true,
+        fetchTimeoutSeconds: Int = 30,
+        hostCredentials: [GitHostCredential] = []
+    ) {
+        self.fetchBeforeCompare = fetchBeforeCompare
+        self.fetchTimeoutSeconds = fetchTimeoutSeconds
+        self.hostCredentials = hostCredentials
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        fetchBeforeCompare = try container.decodeIfPresent(Bool.self, forKey: .fetchBeforeCompare) ?? true
+        fetchTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .fetchTimeoutSeconds) ?? 30
+        hostCredentials = try container.decodeIfPresent([GitHostCredential].self, forKey: .hostCredentials) ?? []
+    }
+}
+
+struct GitHostCredential: Codable, Identifiable, Equatable {
+    var host: String
+    var username: String
+
+    var id: String { normalizedHost }
+    var normalizedHost: String { Self.normalizeHost(host) }
+
+    init(host: String, username: String) {
+        self.host = Self.normalizeHost(host)
+        self.username = username.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func normalizeHost(_ host: String) -> String {
+        host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
 }
 
 struct NotificationConfig: Codable {

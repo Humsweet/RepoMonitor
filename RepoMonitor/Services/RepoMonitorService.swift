@@ -133,18 +133,24 @@ final class RepoMonitorService: ObservableObject {
         snapshot.isSkipped = false
         snapshot.fetchSuccess = true
         snapshot.fetchError = ""
+        let rawRemoteUrl = await gitCli.originRemoteUrl(in: path)
+        let sanitizedRemoteUrl = GitCLI.sanitizeRemoteUrl(rawRemoteUrl)
 
         if shouldSkip(path) {
             return makeSkippedSnapshot(from: previous)
         }
 
         if config.git.fetchBeforeCompare {
-            let fetchResult = await gitCli.fetch(in: path)
+            let fetchResult = await gitCli.fetch(
+                in: path,
+                remoteURL: rawRemoteUrl,
+                credential: credential(forRemoteURL: rawRemoteUrl)
+            )
             if consumeSkip(for: path) {
                 return makeSkippedSnapshot(from: previous)
             }
             snapshot.fetchSuccess = fetchResult.success
-            snapshot.fetchError = fetchResult.error
+            snapshot.fetchError = decorateFetchError(fetchResult.error, remoteURL: rawRemoteUrl)
         }
 
         snapshot.branch = await gitCli.currentBranch(in: path)
@@ -157,7 +163,7 @@ final class RepoMonitorService: ObservableObject {
             return makeSkippedSnapshot(from: previous)
         }
 
-        snapshot.remoteUrl = await gitCli.remoteUrl(in: path)
+        snapshot.remoteUrl = sanitizedRemoteUrl
         if consumeSkip(for: path) {
             return makeSkippedSnapshot(from: previous)
         }
@@ -371,5 +377,35 @@ final class RepoMonitorService: ObservableObject {
 
     private func normalizePath(_ path: String) -> String {
         (path as NSString).expandingTildeInPath
+    }
+
+    private func credential(forRemoteURL remoteURL: String) -> GitCLI.HTTPBasicCredential? {
+        guard let host = GitCLI.remoteHost(from: remoteURL) else { return nil }
+        guard let entry = config.git.hostCredentials.first(where: { $0.normalizedHost == host }) else { return nil }
+        guard let token = GitCredentialStore.token(host: entry.host, username: entry.username) else { return nil }
+
+        return GitCLI.HTTPBasicCredential(username: entry.username, token: token)
+    }
+
+    private func decorateFetchError(_ error: String, remoteURL: String) -> String {
+        guard !error.isEmpty else { return error }
+        guard error.localizedCaseInsensitiveContains("authentication failed")
+                || error.localizedCaseInsensitiveContains("cannot prompt because user interactivity has been disabled")
+        else {
+            return error
+        }
+
+        guard let host = GitCLI.remoteHost(from: remoteURL) else { return error }
+
+        if let entry = config.git.hostCredentials.first(where: { $0.normalizedHost == host }),
+           !GitCredentialStore.hasToken(host: entry.host, username: entry.username) {
+            return "\(error)\nSaved credential for \(host) is missing its token in macOS Keychain."
+        }
+
+        if remoteURL.lowercased().hasPrefix("https://") || remoteURL.lowercased().hasPrefix("http://") {
+            return "\(error)\nAdd a saved HTTPS credential for \(host) in Settings to avoid interactive auth prompts."
+        }
+
+        return error
     }
 }

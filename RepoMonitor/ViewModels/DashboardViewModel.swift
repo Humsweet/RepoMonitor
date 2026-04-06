@@ -251,6 +251,42 @@ final class DashboardViewModel: ObservableObject {
         NSWorkspace.shared.activateFileViewerSelecting([path])
     }
 
+    func saveHostCredential(host: String, username: String, token: String) throws {
+        let entry = GitHostCredential(host: host, username: username)
+        guard !entry.host.isEmpty else {
+            throw GitCredentialStore.StoreError.emptyValue("Host")
+        }
+        guard !entry.username.isEmpty else {
+            throw GitCredentialStore.StoreError.emptyValue("Username")
+        }
+
+        if let existing = config.git.hostCredentials.first(where: { $0.normalizedHost == entry.normalizedHost }),
+           existing.username != entry.username {
+            GitCredentialStore.deleteToken(host: existing.host, username: existing.username)
+        }
+
+        try GitCredentialStore.saveToken(token, host: entry.host, username: entry.username)
+
+        if let index = config.git.hostCredentials.firstIndex(where: { $0.normalizedHost == entry.normalizedHost }) {
+            config.git.hostCredentials[index] = entry
+        } else {
+            config.git.hostCredentials.append(entry)
+        }
+
+        config.git.hostCredentials.sort { $0.host.localizedCaseInsensitiveCompare($1.host) == .orderedAscending }
+        saveConfig()
+    }
+
+    func removeHostCredential(_ credential: GitHostCredential) {
+        GitCredentialStore.deleteToken(host: credential.host, username: credential.username)
+        config.git.hostCredentials.removeAll { $0.normalizedHost == credential.normalizedHost }
+        saveConfig()
+    }
+
+    func hasStoredToken(for credential: GitHostCredential) -> Bool {
+        GitCredentialStore.hasToken(host: credential.host, username: credential.username)
+    }
+
     func toggleSort(by column: RepoSortColumn) {
         if sortColumn == column {
             sortAscending.toggle()

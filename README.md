@@ -119,7 +119,11 @@ Edit it to tell the app which folders to watch. A fully annotated example is in 
   ],
   "git": {
     "fetchBeforeCompare": true,   // run `git fetch` before checking status
-    "fetchTimeoutSeconds": 30     // per-repo fetch timeout
+    "fetchTimeoutSeconds": 30,    // per-repo fetch timeout
+    "hostCredentials": [
+      // Optional HTTPS host credentials. Token/app password is stored in macOS Keychain.
+      { "host": "bitbucket.org", "username": "your-bitbucket-username" }
+    ]
   },
   "notifications": {
     "enabled": true,
@@ -139,6 +143,8 @@ Edit it to tell the app which folders to watch. A fully annotated example is in 
 ```
 
 > **Tip:** Config changes are picked up automatically on the next scan. No restart needed.
+>
+> **HTTPS auth:** If a remote uses HTTPS and cannot prompt interactively, save its host credential once in Settings. RepoMonitor stores the token/app password in macOS Keychain and reuses it for future scans.
 
 ---
 
@@ -324,7 +330,11 @@ git clone https://github.com/Humsweet/RepoMonitor.git
   ],
   "git": {
     "fetchBeforeCompare": true,   // 检测前先执行 git fetch
-    "fetchTimeoutSeconds": 30     // 每个仓库的 fetch 超时时间（秒）
+    "fetchTimeoutSeconds": 30,    // 每个仓库的 fetch 超时时间（秒）
+    "hostCredentials": [
+      // 可选的 HTTPS 主机凭证。token / app password 保存在 macOS 钥匙串里。
+      { "host": "bitbucket.org", "username": "your-bitbucket-username" }
+    ]
   },
   "notifications": {
     "enabled": true,
@@ -343,7 +353,9 @@ git clone https://github.com/Humsweet/RepoMonitor.git
 }
 ```
 
-> **提示：** 修改 `config.json` 后无需重启，下次扫描时自动生效。
+> **提示：** 配置修改后会在下一次扫描时生效，无需重启。
+>
+> **HTTPS 认证：** 如果某个 remote 使用 HTTPS 且无法交互式登录，请在 Settings 中为对应 host 保存一次凭证。RepoMonitor 会把 token / app password 存到 macOS 钥匙串，并在后续扫描时自动复用。
 
 ---
 

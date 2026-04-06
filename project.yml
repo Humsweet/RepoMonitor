@@ -22,8 +22,8 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.humsweet.RepoMonitor
         INFOPLIST_FILE: RepoMonitor/Info.plist
         CODE_SIGN_ENTITLEMENTS: RepoMonitor/RepoMonitor.entitlements
-        MARKETING_VERSION: "1.0.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "1.1.0"
+        CURRENT_PROJECT_VERSION: "2"
         GENERATE_INFOPLIST_FILE: false
         COMBINE_HIDPI_IMAGES: true
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

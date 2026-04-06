@@ -1,6 +1,11 @@
 import Foundation
 
 actor GitCLI {
+    struct HTTPBasicCredential {
+        let username: String
+        let token: String
+    }
+
     private let timeoutSeconds: Int
     private var currentProcess: Process?
 
@@ -77,13 +82,29 @@ actor GitCLI {
         currentProcess?.terminate()
     }
 
-    func fetch(in directory: String) async -> (success: Bool, error: String) {
+    func fetch(
+        in directory: String,
+        remoteURL: String = "",
+        credential: HTTPBasicCredential? = nil
+    ) async -> (success: Bool, error: String) {
         do {
-            let result = try await run(["fetch", "origin", "--prune"], in: directory)
+            var arguments: [String] = []
+            if let configOverride = Self.fetchAuthorizationConfig(remoteURL: remoteURL, credential: credential) {
+                arguments += ["-c", configOverride]
+            }
+            arguments += ["fetch", "origin", "--prune"]
+
+            let result = try await run(arguments, in: directory)
             return (result.success, result.error)
         } catch {
             return (false, error.localizedDescription)
         }
+    }
+
+    func originRemoteUrl(in directory: String) async -> String {
+        guard let result = try? await run(["remote", "get-url", "origin"], in: directory),
+              result.success else { return "" }
+        return result.output
     }
 
     func currentBranch(in directory: String) async -> String {
@@ -99,9 +120,7 @@ actor GitCLI {
     }
 
     func remoteUrl(in directory: String) async -> String {
-        guard let result = try? await run(["remote", "get-url", "origin"], in: directory),
-              result.success else { return "" }
-        return sanitizeRemoteUrl(result.output)
+        Self.sanitizeRemoteUrl(await originRemoteUrl(in: directory))
     }
 
     func isDirty(in directory: String) async -> Bool {
@@ -121,7 +140,7 @@ actor GitCLI {
         return (ahead, behind)
     }
 
-    private func sanitizeRemoteUrl(_ url: String) -> String {
+    static func sanitizeRemoteUrl(_ url: String) -> String {
         // Remove credentials from URLs like https://user:token@github.com/...
         guard let urlObj = URL(string: url),
               urlObj.user != nil || urlObj.password != nil else { return url }
@@ -129,6 +148,40 @@ actor GitCLI {
         components?.user = nil
         components?.password = nil
         return components?.string ?? url
+    }
+
+    static func remoteHost(from remoteURL: String) -> String? {
+        let sanitized = sanitizeRemoteUrl(remoteURL)
+
+        if let url = URL(string: sanitized), let host = url.host {
+            return host.lowercased()
+        }
+
+        guard let atIndex = sanitized.firstIndex(of: "@"),
+              let colonIndex = sanitized[atIndex...].firstIndex(of: ":"),
+              sanitized.index(after: atIndex) < colonIndex else {
+            return nil
+        }
+
+        return String(sanitized[sanitized.index(after: atIndex)..<colonIndex]).lowercased()
+    }
+
+    private static func fetchAuthorizationConfig(
+        remoteURL: String,
+        credential: HTTPBasicCredential?
+    ) -> String? {
+        guard let credential else { return nil }
+
+        let sanitized = sanitizeRemoteUrl(remoteURL)
+        guard let url = URL(string: sanitized),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https",
+              url.host != nil else {
+            return nil
+        }
+
+        let auth = Data("\(credential.username):\(credential.token)".utf8).base64EncodedString()
+        return "http.\(sanitized).extraHeader=Authorization: Basic \(auth)"
     }
 
     private func clearCurrentProcess(_ process: Process) {

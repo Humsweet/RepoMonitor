@@ -11,7 +11,13 @@
   ],
   "git": {
     "fetchBeforeCompare": true,
-    "fetchTimeoutSeconds": 30
+    "fetchTimeoutSeconds": 30,
+    "hostCredentials": [
+      {
+        "host": "bitbucket.org",
+        "username": "your-bitbucket-username"
+      }
+    ]
   },
   "notifications": {
     "enabled": true,
