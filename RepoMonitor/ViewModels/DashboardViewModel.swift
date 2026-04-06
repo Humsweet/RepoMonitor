@@ -234,7 +234,11 @@ final class DashboardViewModel: ObservableObject {
             for url in panel.urls {
                 let path = url.path
                 if !config.roots.contains(where: { $0.path == path }) {
-                    config.roots.append(RootEntry(path: path, mode: .children))
+                    // If the folder itself is a git repo, use mode .self; otherwise .children
+                    let isGitRepo = FileManager.default.fileExists(
+                        atPath: url.appendingPathComponent(".git").path
+                    )
+                    config.roots.append(RootEntry(path: path, mode: isGitRepo ? .`self` : .children))
                 }
             }
             saveConfig()

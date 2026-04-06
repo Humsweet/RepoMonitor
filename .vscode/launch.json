@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:RepoMonitor}",
+            "name": "Debug RepoMonitor",
+            "target": "RepoMonitor",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug RepoMonitor"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:RepoMonitor}",
+            "name": "Release RepoMonitor",
+            "target": "RepoMonitor",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release RepoMonitor"
+        }
+    ]
+}
