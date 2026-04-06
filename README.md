@@ -1,152 +1,206 @@
+<div align="center">
+
 # RepoMonitor
 
-> A lightweight macOS menu-bar app that watches all your Git repositories and tells you what needs attention — at a glance.
+**A lightweight macOS menu-bar app that watches all your Git repositories and tells you what needs attention — at a glance.**
 
-![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey?logo=apple)
-![Swift](https://img.shields.io/badge/swift-5.9-orange?logo=swift)
-![License](https://img.shields.io/badge/license-MIT-blue)
+[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey?logo=apple&logoColor=white)](https://www.apple.com/macos/)
+[![Swift](https://img.shields.io/badge/swift-5.9-F05138?logo=swift&logoColor=white)](https://swift.org)
+[![SwiftUI](https://img.shields.io/badge/UI-SwiftUI-0063EB?logo=swift&logoColor=white)](https://developer.apple.com/xcode/swiftui/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-<!-- Replace with an actual screenshot -->
-<!-- ![Screenshot](screenshots/dashboard.png) -->
+[English](#english) · [中文](#中文)
+
+</div>
+
+---
+
+<a name="english"></a>
+
+## Table of Contents
+
+- [What it does](#what-it-does)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Configuration](#configuration)
+- [Usage](#usage)
+- [Project Layout](#project-layout)
+- [Contributing](#contributing)
+- [License](#license)
 
 ---
 
 ## What it does
 
-RepoMonitor sits in your menu bar and periodically scans your Git repositories. It fetches from remote and surfaces three kinds of status:
+RepoMonitor sits in your menu bar and periodically scans your Git repositories. It runs `git fetch` automatically and surfaces three kinds of status:
 
 | Status | Meaning |
 |--------|---------|
-| **Behind** | Remote has commits you haven't pulled |
-| **Dirty** | Uncommitted local changes |
-| **Ahead** | Local commits not yet pushed |
+| 🔴 **Behind** | Remote has commits you haven't pulled |
+| 🟡 **Dirty** | Uncommitted local changes exist |
+| 🟢 **Ahead** | Local commits not yet pushed |
 
-Open the dashboard for a full table view with one-click actions per repo.
+Open the dashboard for a full sortable table with one-click actions per repo.
 
 ---
 
 ## Features
 
-- **Menu bar icon** — turns orange the moment any repo needs attention
-- **Dashboard** — sortable table: repo name, path, ahead/behind count, last scan time
-- **Auto-scan** — runs on a configurable interval (default 10 min)
-- **Quick actions** — per-row buttons to scan, open in Terminal, VS Code, or Finder
-- **macOS notifications** — get alerted when repos fall behind or go dirty
-- **Flexible config** — scan entire folder trees or individual paths via JSON
+| Feature | Description |
+|---------|-------------|
+| **Menu bar icon** | Changes to reflect worst-case repo status at a glance |
+| **Dashboard** | Sortable table: repo name, path, branch, ahead/behind counts, last scan time |
+| **Auto-scan** | Runs on a configurable interval (default: 10 min) |
+| **Quick actions** | Per-row buttons to open in Terminal, VS Code, or Finder |
+| **macOS notifications** | Alerts when repos fall behind or go dirty (rate-limited) |
+| **Skip current repo** | Interrupt a long-running fetch without cancelling the full scan |
+| **Persistent state** | Remembers last scan results across restarts |
+| **Flexible config** | Scan entire folder trees (`children`) or individual paths (`self`) via JSON |
 
 ---
 
 ## Requirements
 
 - macOS 13 Ventura or later
-- Xcode Command Line Tools (or full Xcode)
+- Xcode Command Line Tools (`xcode-select --install`) or full Xcode
 - Git available in `$PATH`
 
 ---
 
 ## Installation
 
-### Option A — Build from source
+### Option A — Build from source (recommended)
 
 ```bash
-git clone https://github.com/<your-username>/RepoMonitor.git
+git clone https://github.com/Humsweet/RepoMonitor.git
 cd RepoMonitor
 bash scripts/bundle.sh
 open build/RepoMonitor.app
 ```
 
-Move `build/RepoMonitor.app` to `/Applications` if you want it to persist across builds.
+Move `build/RepoMonitor.app` to `/Applications` for a persistent installation.
+
+> **First launch note:** macOS Gatekeeper may block the app because it isn't code-signed. Right-click → **Open** → **Open** to bypass the warning.
 
 ### Option B — Xcode
 
-Open `RepoMonitor.xcodeproj`, select the **RepoMonitor** scheme, and hit **Run**.
+```bash
+git clone https://github.com/Humsweet/RepoMonitor.git
+```
+
+Open `RepoMonitor.xcodeproj`, select the **RepoMonitor** scheme, and press **⌘R**.
 
 ---
 
 ## Configuration
 
-On first launch RepoMonitor creates a default config file at:
+On first launch, RepoMonitor creates a default config at:
 
 ```
 ~/.config/repo-monitor/config.json
 ```
 
-Edit it to tell the app which folders to watch. A full example is in [`config.example.json`](config.example.json).
+Edit it to tell the app which folders to watch. A fully annotated example is in [`config.example.json`](config.example.json).
 
-### Config reference
+### Full config reference
 
 ```jsonc
 {
   "roots": [
     // Scan every direct child of this folder as a separate repo
     { "path": "~/Projects", "mode": "children" },
-    // Treat this path itself as a single repo
+    // Treat this exact path itself as a single repo
     { "path": "~/dotfiles", "mode": "self" }
+  ],
+  "unwatchedPaths": [
+    // Absolute paths to exclude from all scans
+    "~/Projects/archived-repo"
   ],
   "git": {
     "fetchBeforeCompare": true,   // run `git fetch` before checking status
-    "fetchTimeoutSeconds": 30
+    "fetchTimeoutSeconds": 30     // per-repo fetch timeout
   },
   "notifications": {
     "enabled": true,
-    // "errors" | "behind" | "behindAndDirty"
-    "mode": "behindAndDirty",
-    "minimumIntervalMinutes": 30  // avoid notification spam
+    "mode": "behindAndDirty",     // "errors" | "behind" | "behindAndDirty"
+    "minimumIntervalMinutes": 30  // minimum time between notification bursts
   },
   "desktop": {
-    "scanIntervalMinutes": 10     // auto-scan interval
+    "scanIntervalMinutes": 10     // background auto-scan interval
+  },
+  "state": {
+    "filePath": "state.json"      // persisted scan state (relative to config dir)
+  },
+  "logging": {
+    "filePath": "repo-monitor-runtime.log"
   }
 }
 ```
 
-> **Tip:** Changes to `config.json` are picked up automatically on the next scan. No restart needed.
+> **Tip:** Config changes are picked up automatically on the next scan. No restart needed.
 
 ---
 
 ## Usage
 
 1. **Launch** the app — a monitor icon appears in the menu bar.
-2. **Click the icon** to see a quick summary or open the dashboard.
-3. **Dashboard** — click any column header to sort; hover a row for quick actions.
-4. **Scan now** — hit the **Scan** button (bottom-right) to trigger an immediate full scan.
-5. **Skip a repo** — click **Unwatch** in the row context menu to stop monitoring it.
+2. **Click the icon** to see a live summary (total repos, behind count, dirty count, warnings).
+3. **Open Dashboard** — click any column header to sort; hover a row to reveal quick-action buttons.
+4. **Scan now** — click **Scan** in the menu bar popover to trigger an immediate full scan.
+5. **Skip a repo** — click **Skip Current Repo** during a scan to skip a slow or hanging fetch.
+6. **Edit config** — click **Edit Config** to open `config.json` directly in your default editor.
 
 ---
 
-## Building for distribution
-
-```bash
-bash scripts/bundle.sh
-# Output: build/RepoMonitor.app
-```
-
-The script runs a release build via SwiftPM and packages it into a `.app` bundle. No code-signing is configured by default, so macOS may show a Gatekeeper warning on first open — right-click → Open to bypass it.
-
----
-
-## Project layout
+## Project Layout
 
 ```
 RepoMonitor/
-├── Models/          # Data structs: RepoSnapshot, MonitorConfig
-├── Services/        # Git CLI wrapper, config loader, notifications
-├── ViewModels/      # DashboardViewModel — orchestrates scanning & state
-├── Views/           # SwiftUI views (Dashboard, MenuBar, Settings…)
-└── RepoMonitorApp.swift
+├── Models/
+│   ├── MonitorConfig.swift      # All config structs (roots, git, notifications…)
+│   └── RepoSnapshot.swift       # Per-repo state: branch, ahead/behind, dirty, errors
+├── Services/
+│   ├── GitCLI.swift             # Actor wrapping git subprocess calls
+│   ├── ConfigLoader.swift       # JSON config & state persistence
+│   ├── NotificationService.swift
+│   └── RepoMonitorService.swift # Scan orchestration & state management
+├── ViewModels/
+│   └── DashboardViewModel.swift # Observable bridge: scan results → UI
+├── Views/
+│   ├── MenuBarView.swift        # Popover shown on menu bar click
+│   ├── DashboardView.swift      # Full dashboard window
+│   ├── RepoTableView.swift      # Sortable repo table
+│   ├── RepoRowView.swift        # Individual row with quick actions
+│   ├── RepoDetailView.swift     # Detail sheet for a single repo
+│   ├── SettingsView.swift       # In-app settings panel
+│   ├── StatsCardView.swift      # Summary stats cards
+│   └── Theme.swift              # Shared colors & typography
+└── RepoMonitorApp.swift         # App entry point & window scene setup
+
 scripts/
-└── bundle.sh        # Release build + app bundle packaging
-config.example.json  # Annotated config template
+└── bundle.sh                    # Release build → .app bundle
+config.example.json              # Annotated config template
 ```
 
 ---
 
 ## Contributing
 
-Issues and PRs are welcome. A few notes:
+Issues and pull requests are welcome!
 
-- Follow the coding conventions in [`AGENTS.md`](AGENTS.md).
-- There is no test target yet — manual verification steps are appreciated in PRs.
-- Keep commits focused and use short imperative subjects (`Fix fetch timeout`, `Add dirty filter`).
+- Follow the conventions in [`AGENTS.md`](AGENTS.md).
+- Write short, imperative commit subjects: `Fix fetch timeout on slow remotes`, `Add dirty filter to dashboard`.
+- Include manual test steps for UI changes (menu bar behavior, notification triggers, settings persistence).
+- There is no test target yet — XCTest coverage under `RepoMonitorTests/` is encouraged for new `Models/` or `Services/` logic.
+
+---
+
+## Security
+
+- RepoMonitor never reads or stores Git credentials.
+- Remote URLs are sanitized before display/logging to strip embedded usernames/passwords.
+- No network requests are made except `git fetch` to your configured remotes.
 
 ---
 
@@ -156,11 +210,29 @@ MIT — see [LICENSE](LICENSE) for details.
 
 ---
 
+<a name="中文"></a>
+
+<div align="center">
+
+# 中文说明
+
+**RepoMonitor — 轻量 macOS 菜单栏应用，帮你一眼掌握所有 Git 仓库的状态。**
+
+</div>
+
 ---
 
-# RepoMonitor（中文说明）
+## 目录
 
-> 一款轻量的 macOS 菜单栏应用，帮你一眼掌握所有 Git 仓库的状态。
+- [它能做什么](#它能做什么)
+- [功能一览](#功能一览)
+- [系统要求](#系统要求)
+- [安装方式](#安装方式)
+- [配置说明](#配置说明)
+- [使用步骤](#使用步骤)
+- [项目结构](#项目结构)
+- [参与贡献](#参与贡献)
+- [许可证](#许可证)
 
 ---
 
@@ -170,39 +242,43 @@ RepoMonitor 常驻菜单栏，定时扫描你的 Git 仓库，自动执行 `git 
 
 | 状态 | 含义 |
 |------|------|
-| **Behind** | 远端有你还没 pull 的提交 |
-| **Dirty** | 有未提交的本地修改 |
-| **Ahead** | 有本地提交还没 push |
+| 🔴 **Behind（落后）** | 远端有你还没 pull 的提交 |
+| 🟡 **Dirty（有改动）** | 有未提交的本地修改 |
+| 🟢 **Ahead（超前）** | 有本地提交还没 push |
 
-打开 Dashboard 可查看完整表格，并对每个仓库执行快捷操作。
+打开 Dashboard 可查看完整的可排序表格，并对每个仓库执行快捷操作。
 
 ---
 
 ## 功能一览
 
-- **菜单栏图标**：有仓库需要关注时图标变橙色
-- **Dashboard 面板**：可排序的仓库表格，显示名称、路径、ahead/behind 数量、最近扫描时间
-- **自动扫描**：按可配置的间隔自动运行（默认 10 分钟）
-- **快捷操作**：每行提供按钮，一键扫描、在终端/VS Code/Finder 中打开
-- **macOS 通知**：仓库落后或有脏文件时推送通知
-- **JSON 配置**：灵活指定要监控的目录树或单个路径
+| 功能 | 说明 |
+|------|------|
+| **菜单栏图标** | 实时反映所有仓库中最严重的状态 |
+| **Dashboard 面板** | 可排序表格：仓库名、路径、分支、ahead/behind 数量、最近扫描时间 |
+| **自动扫描** | 按可配置的间隔自动运行（默认 10 分钟） |
+| **快捷操作** | 每行提供按钮，一键在终端/VS Code/Finder 中打开 |
+| **macOS 通知** | 仓库落后或有脏文件时推送通知（有频率限制，避免刷屏） |
+| **跳过当前仓库** | 扫描时可中断慢速或卡住的 fetch，不影响整体扫描 |
+| **状态持久化** | 重启后保留上次扫描结果 |
+| **灵活配置** | 通过 JSON 指定扫描整个目录树（`children`）或单个路径（`self`） |
 
 ---
 
 ## 系统要求
 
 - macOS 13 Ventura 及以上
-- Xcode Command Line Tools 或完整 Xcode
+- Xcode Command Line Tools（`xcode-select --install`）或完整 Xcode
 - Git 在 `$PATH` 中可用
 
 ---
 
 ## 安装方式
 
-### 方式一：从源码构建
+### 方式一：从源码构建（推荐）
 
 ```bash
-git clone https://github.com/<your-username>/RepoMonitor.git
+git clone https://github.com/Humsweet/RepoMonitor.git
 cd RepoMonitor
 bash scripts/bundle.sh
 open build/RepoMonitor.app
@@ -210,9 +286,15 @@ open build/RepoMonitor.app
 
 如需长期使用，将 `build/RepoMonitor.app` 拷贝到 `/Applications`。
 
+> **首次启动提示：** 由于应用未代码签名，macOS Gatekeeper 可能会阻止运行。右键点击 → **打开** → **打开** 即可绕过提示。
+
 ### 方式二：Xcode
 
-打开 `RepoMonitor.xcodeproj`，选择 **RepoMonitor** Scheme，点击 **Run**。
+```bash
+git clone https://github.com/Humsweet/RepoMonitor.git
+```
+
+打开 `RepoMonitor.xcodeproj`，选择 **RepoMonitor** Scheme，按 **⌘R** 运行。
 
 ---
 
@@ -226,43 +308,53 @@ open build/RepoMonitor.app
 
 编辑该文件告诉应用要监控哪些目录。完整示例见 [`config.example.json`](config.example.json)。
 
-### 配置字段说明
+### 完整配置字段说明
 
 ```jsonc
 {
   "roots": [
-    // 扫描该目录下的所有直接子目录（每个子目录视为一个仓库）
+    // 扫描该目录下的所有直接子目录（每个子目录视为一个独立仓库）
     { "path": "~/Projects", "mode": "children" },
     // 将该路径本身视为一个仓库
     { "path": "~/dotfiles", "mode": "self" }
   ],
+  "unwatchedPaths": [
+    // 需要从扫描中排除的绝对路径
+    "~/Projects/archived-repo"
+  ],
   "git": {
     "fetchBeforeCompare": true,   // 检测前先执行 git fetch
-    "fetchTimeoutSeconds": 30
+    "fetchTimeoutSeconds": 30     // 每个仓库的 fetch 超时时间（秒）
   },
   "notifications": {
     "enabled": true,
-    // 可选值："errors" | "behind" | "behindAndDirty"
-    "mode": "behindAndDirty",
-    "minimumIntervalMinutes": 30  // 避免通知轰炸
+    "mode": "behindAndDirty",     // 可选值："errors" | "behind" | "behindAndDirty"
+    "minimumIntervalMinutes": 30  // 两次通知之间的最短间隔（避免轰炸）
   },
   "desktop": {
-    "scanIntervalMinutes": 10     // 自动扫描间隔（分钟）
+    "scanIntervalMinutes": 10     // 后台自动扫描间隔（分钟）
+  },
+  "state": {
+    "filePath": "state.json"      // 持久化扫描状态文件（相对于配置目录）
+  },
+  "logging": {
+    "filePath": "repo-monitor-runtime.log"
   }
 }
 ```
 
-> **提示**：修改 `config.json` 后无需重启，下次扫描时自动生效。
+> **提示：** 修改 `config.json` 后无需重启，下次扫描时自动生效。
 
 ---
 
 ## 使用步骤
 
 1. 启动应用，菜单栏出现监控图标。
-2. 点击图标查看摘要，或打开 Dashboard。
-3. Dashboard 中点击列标题排序；悬停行查看快捷操作按钮。
-4. 点击右下角 **Scan** 按钮立即触发全量扫描。
-5. 右键点击某行 → **Unwatch** 可停止监控该仓库。
+2. 点击图标查看实时摘要（仓库总数、落后数量、脏文件数量、警告数量）。
+3. 点击 **Open Dashboard** 打开完整面板；点击列标题排序；悬停行查看快捷操作按钮。
+4. 点击菜单栏弹窗中的 **Scan** 立即触发全量扫描。
+5. 扫描进行中可点击 **Skip Current Repo** 跳过当前慢速仓库。
+6. 点击 **Edit Config** 直接在默认编辑器中打开 `config.json`。
 
 ---
 
@@ -270,21 +362,50 @@ open build/RepoMonitor.app
 
 ```
 RepoMonitor/
-├── Models/          # 数据结构：RepoSnapshot、MonitorConfig
-├── Services/        # Git CLI 封装、配置加载、通知服务
-├── ViewModels/      # DashboardViewModel — 扫描调度与状态管理
-├── Views/           # SwiftUI 视图（Dashboard、菜单栏、设置…）
-└── RepoMonitorApp.swift
+├── Models/
+│   ├── MonitorConfig.swift      # 所有配置结构体（roots、git、notifications…）
+│   └── RepoSnapshot.swift       # 单仓库状态：分支、ahead/behind、脏文件、错误
+├── Services/
+│   ├── GitCLI.swift             # 封装 git 子进程调用的 Actor
+│   ├── ConfigLoader.swift       # JSON 配置与状态持久化
+│   ├── NotificationService.swift
+│   └── RepoMonitorService.swift # 扫描调度与状态管理
+├── ViewModels/
+│   └── DashboardViewModel.swift # 可观察对象：扫描结果 → UI
+├── Views/
+│   ├── MenuBarView.swift        # 菜单栏点击后的弹出窗口
+│   ├── DashboardView.swift      # 完整 Dashboard 窗口
+│   ├── RepoTableView.swift      # 可排序仓库表格
+│   ├── RepoRowView.swift        # 单行视图 + 快捷操作
+│   ├── RepoDetailView.swift     # 单仓库详情面板
+│   ├── SettingsView.swift       # 应用内设置面板
+│   ├── StatsCardView.swift      # 统计摘要卡片
+│   └── Theme.swift              # 共享颜色与排版
+└── RepoMonitorApp.swift         # 应用入口 + 窗口场景配置
+
 scripts/
-└── bundle.sh        # Release 构建 + App Bundle 打包
-config.example.json  # 带注释的配置模板
+└── bundle.sh                    # Release 构建 → .app Bundle
+config.example.json              # 带注释的配置模板
 ```
 
 ---
 
 ## 参与贡献
 
-欢迎提 Issue 和 PR，请参考 [`AGENTS.md`](AGENTS.md) 中的代码规范。
+欢迎提 Issue 和 PR！
+
+- 请参考 [`AGENTS.md`](AGENTS.md) 中的代码规范。
+- 使用简短的祈使句式提交信息：`Fix fetch timeout on slow remotes`、`Add dirty filter to dashboard`。
+- UI 相关改动请附上手动测试步骤（菜单栏行为、通知触发、设置持久化等）。
+- 暂无测试目标 — 欢迎在 `RepoMonitorTests/` 下为 `Models/` 或 `Services/` 逻辑添加 XCTest 覆盖。
+
+---
+
+## 安全说明
+
+- RepoMonitor 不读取、不存储任何 Git 凭据。
+- 远端 URL 在显示和记录日志前会自动去除内嵌的用户名/密码。
+- 除对已配置远端执行 `git fetch` 外，应用不发起任何网络请求。
 
 ---
 
