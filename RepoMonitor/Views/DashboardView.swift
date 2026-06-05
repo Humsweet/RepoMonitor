@@ -12,22 +12,10 @@ struct DashboardView: View {
 
             Divider().background(Theme.border)
 
-            // Stats
-            StatsBarView(vm: vm)
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-            // Progress bar
-            if vm.progress.isScanning {
-                scanProgressBar
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 8)
-            }
-
             // Repo list (full width)
             repoList
                 .padding(.horizontal, 20)
+                .padding(.top, 12)
                 .padding(.bottom, 8)
 
             // Bottom bar
@@ -91,32 +79,6 @@ struct DashboardView: View {
         }
     }
 
-    // MARK: - Scan Progress
-
-    private var scanProgressBar: some View {
-        VStack(spacing: 4) {
-            HStack {
-                Text("Scanning: \(vm.progress.currentRepo)")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-                Spacer()
-                Button("Skip Current") {
-                    vm.skipCurrentRepo()
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Theme.statusBehind)
-                Text("\(vm.progress.current)/\(vm.progress.total)")
-                    .font(.system(size: 14, design: .monospaced))
-                    .foregroundStyle(Theme.textTertiary)
-            }
-            ProgressView(value: vm.progress.fraction)
-                .tint(Theme.accent)
-                .scaleEffect(x: 1, y: 0.5)
-        }
-    }
-
     // MARK: - Repo List
 
     private var repoList: some View {
@@ -147,8 +109,28 @@ struct DashboardView: View {
     // MARK: - Bottom Bar
 
     private var bottomBar: some View {
-        HStack {
-            if let date = vm.lastScanDate {
+        HStack(spacing: 10) {
+            // Left side: scan progress while scanning, last-scan info otherwise.
+            // Both states render inside the same fixed-height bar, so the
+            // layout never shifts when a scan starts or ends.
+            if vm.progress.isScanning {
+                Text("Scanning: \(vm.progress.currentRepo)")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                ProgressView(value: vm.progress.fraction)
+                    .tint(Theme.accent)
+                    .frame(width: 160)
+                Text("\(vm.progress.current)/\(vm.progress.total)")
+                    .font(.system(size: 14, design: .monospaced))
+                    .foregroundStyle(Theme.textTertiary)
+                Button("Skip Current") {
+                    vm.skipCurrentRepo()
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.statusBehind)
+            } else if let date = vm.lastScanDate {
                 Text("Last scan: \(date.formatted(.dateTime.hour().minute().second())) (\(String(format: "%.1fs", vm.scanDuration)))")
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.textTertiary)

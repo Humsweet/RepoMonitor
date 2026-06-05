@@ -54,7 +54,7 @@ private struct RepoTableHeader: View {
             SortableHeader(title: "Last Scan", column: .scanned, vm: vm)
                 .frame(width: 140)
             // Space for action buttons
-            Color.clear.frame(width: 136)
+            Color.clear.frame(width: 162)
         }
         .padding(.vertical, 8)
         .padding(.horizontal, 16)
@@ -203,8 +203,9 @@ private struct RepoTableRow: View {
                 RowActionButton(icon: "terminal", tooltip: "Terminal", action: onOpenTerminal)
                 RowActionButton(icon: "chevron.left.forwardslash.chevron.right", tooltip: "VS Code", action: onOpenVSCode)
                 RowActionButton(icon: "folder", tooltip: "Finder", action: onOpenFinder)
+                RowActionButton(icon: "eye.slash", tooltip: "Unwatch", tint: Theme.statusError, action: onUnwatch)
             }
-            .frame(width: 136, alignment: .trailing)
+            .frame(width: 162, alignment: .trailing)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 8)
@@ -249,13 +250,14 @@ private struct RowActionButton: View {
     let icon: String
     let tooltip: String
     var isEnabled: Bool = true
+    var tint: Color = Theme.textSecondary
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
                 .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(isEnabled ? Theme.textSecondary : Theme.textTertiary)
+                .foregroundStyle(isEnabled ? tint : Theme.textTertiary)
                 .frame(width: 24, height: 24)
                 .background(Theme.bgSecondary)
                 .clipShape(RoundedRectangle(cornerRadius: 4))
