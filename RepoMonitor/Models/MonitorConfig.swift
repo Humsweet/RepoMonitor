@@ -57,24 +57,20 @@ struct RootEntry: Codable, Identifiable {
 }
 
 struct GitConfig: Codable {
-    var fetchBeforeCompare: Bool = true
-    var fetchTimeoutSeconds: Int = 30
+    var autoPullEnabled: Bool = false
     var hostCredentials: [GitHostCredential] = []
 
     init(
-        fetchBeforeCompare: Bool = true,
-        fetchTimeoutSeconds: Int = 30,
+        autoPullEnabled: Bool = false,
         hostCredentials: [GitHostCredential] = []
     ) {
-        self.fetchBeforeCompare = fetchBeforeCompare
-        self.fetchTimeoutSeconds = fetchTimeoutSeconds
+        self.autoPullEnabled = autoPullEnabled
         self.hostCredentials = hostCredentials
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        fetchBeforeCompare = try container.decodeIfPresent(Bool.self, forKey: .fetchBeforeCompare) ?? true
-        fetchTimeoutSeconds = try container.decodeIfPresent(Int.self, forKey: .fetchTimeoutSeconds) ?? 30
+        autoPullEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoPullEnabled) ?? false
         hostCredentials = try container.decodeIfPresent([GitHostCredential].self, forKey: .hostCredentials) ?? []
     }
 }

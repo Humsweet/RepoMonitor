@@ -137,8 +137,6 @@ struct SettingsView: View {
 
                     // Scanning section
                     settingsSection("Scanning") {
-                        settingsToggle("Fetch before compare", isOn: $vm.config.git.fetchBeforeCompare)
-
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Scan interval (minutes)")
                                 .font(.system(size: 12, weight: .medium))
@@ -161,29 +159,16 @@ struct SettingsView: View {
                                 Spacer()
                             }
                         }
+                    }
 
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Fetch timeout (seconds)")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(Theme.textSecondary)
+                    // Pull section
+                    settingsSection("Pull") {
+                        settingsToggle("Auto pull after scan", isOn: $vm.config.git.autoPullEnabled)
 
-                            HStack {
-                                TextField("", value: $vm.config.git.fetchTimeoutSeconds, format: .number)
-                                    .font(.system(size: 12, design: .monospaced))
-                                    .textFieldStyle(.plain)
-                                    .foregroundStyle(Theme.textPrimary)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 6)
-                                    .background(Theme.bgCard)
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                                    .overlay(
-                                        RoundedRectangle(cornerRadius: 4)
-                                            .stroke(Theme.border, lineWidth: 1)
-                                    )
-                                    .frame(width: 80)
-                                Spacer()
-                            }
-                        }
+                        Text("When enabled, repos that are behind with a clean working tree and no unpushed commits are pulled automatically (fast-forward only) after each scan.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     settingsSection("Git Credentials") {

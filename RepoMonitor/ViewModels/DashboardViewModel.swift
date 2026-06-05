@@ -37,6 +37,7 @@ final class DashboardViewModel: ObservableObject {
     @Published var searchText = ""
     @Published var sortColumn: RepoSortColumn = .status
     @Published var sortAscending = false
+    @Published var pullingPaths: Set<String> = []
 
     let service: RepoMonitorService
     private var scanTimer: Timer?
@@ -157,6 +158,13 @@ final class DashboardViewModel: ObservableObject {
     func scanRepo(_ repo: RepoSnapshot) async {
         guard !progress.isScanning else { return }
         _ = await service.scanRepo(at: repo.path)
+    }
+
+    func pullRepo(_ repo: RepoSnapshot) async {
+        guard !progress.isScanning, !pullingPaths.contains(repo.path) else { return }
+        pullingPaths.insert(repo.path)
+        defer { pullingPaths.remove(repo.path) }
+        _ = await service.pullRepo(at: repo.path)
     }
 
     func skipCurrentRepo() {

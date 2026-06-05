@@ -101,6 +101,25 @@ actor GitCLI {
         }
     }
 
+    func pull(
+        in directory: String,
+        remoteURL: String = "",
+        credential: HTTPBasicCredential? = nil
+    ) async -> (success: Bool, error: String) {
+        do {
+            var arguments: [String] = []
+            if let configOverride = Self.fetchAuthorizationConfig(remoteURL: remoteURL, credential: credential) {
+                arguments += ["-c", configOverride]
+            }
+            arguments += ["pull", "--ff-only"]
+
+            let result = try await run(arguments, in: directory)
+            return (result.success, result.error)
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
+
     func originRemoteUrl(in directory: String) async -> String {
         guard let result = try? await run(["remote", "get-url", "origin"], in: directory),
               result.success else { return "" }
@@ -123,10 +142,48 @@ actor GitCLI {
         Self.sanitizeRemoteUrl(await originRemoteUrl(in: directory))
     }
 
-    func isDirty(in directory: String) async -> Bool {
-        guard let result = try? await run(["status", "--porcelain"], in: directory),
-              result.success else { return false }
-        return !result.output.isEmpty
+    struct DirtyStatus {
+        let modified: Int
+        let untracked: Int
+        let sampleFiles: [String]
+
+        var isDirty: Bool { modified > 0 || untracked > 0 }
+    }
+
+    /// Mirrors VS Code's git extension: untracked (non-ignored) files count as
+    /// changes like tracked modifications, but untracked directories that are
+    /// themselves git repositories (nested repos / worktrees) are excluded —
+    /// VS Code treats those as separate repositories, not parent-repo changes.
+    func dirtyStatus(in directory: String) async -> DirtyStatus {
+        guard let result = try? await run(["status", "--porcelain", "-uall"], in: directory),
+              result.success, !result.output.isEmpty else {
+            return DirtyStatus(modified: 0, untracked: 0, sampleFiles: [])
+        }
+
+        let fm = FileManager.default
+        var modified = 0
+        var untracked = 0
+        var samples: [String] = []
+        for line in result.output.split(separator: "\n") {
+            let path = String(line.dropFirst(3))
+            if line.hasPrefix("??") {
+                // `-uall` only emits a bare directory entry when it cannot
+                // descend into it, i.e. a nested git repo/worktree. Skip those.
+                if path.hasSuffix("/") {
+                    let gitMarker = ((directory as NSString)
+                        .appendingPathComponent(path) as NSString)
+                        .appendingPathComponent(".git")
+                    if fm.fileExists(atPath: gitMarker) { continue }
+                }
+                untracked += 1
+            } else {
+                modified += 1
+            }
+            if samples.count < 5 {
+                samples.append(path)
+            }
+        }
+        return DirtyStatus(modified: modified, untracked: untracked, sampleFiles: samples)
     }
 
     func aheadBehind(in directory: String) async -> (ahead: Int, behind: Int) {

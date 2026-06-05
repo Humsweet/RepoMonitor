@@ -46,10 +46,13 @@ struct RepoDetailView: View {
                 DetailRow(label: "Ahead", value: "\(repo.ahead)")
                 DetailRow(label: "Behind", value: "\(repo.behind)",
                           valueColor: repo.behind > 0 ? Theme.statusBehind : nil)
-                DetailRow(label: "Dirty", value: repo.isDirty ? "Yes" : "No",
+                DetailRow(label: "Dirty", value: repo.isDirty ? "Yes (\(repo.dirtySummary))" : "No",
                           valueColor: repo.isDirty ? Theme.statusDirty : nil)
                 DetailRow(label: "Fetch", value: repo.fetchSuccess ? "OK" : repo.fetchError,
                           valueColor: repo.fetchSuccess ? Theme.statusClean : Theme.statusError)
+                if !repo.pullError.isEmpty {
+                    DetailRow(label: "Pull", value: repo.pullError, valueColor: Theme.statusError)
+                }
                 DetailRow(label: "Scanned", value: repo.lastScanned.formatted(.relative(presentation: .named)))
             }
             .padding(16)

@@ -15,7 +15,7 @@ final class RepoMonitorService: ObservableObject {
 
     init(config: MonitorConfig) {
         self.config = config
-        self.gitCli = GitCLI(timeoutSeconds: config.git.fetchTimeoutSeconds)
+        self.gitCli = GitCLI()
         self.previousState = ConfigLoader.loadState(from: config)
         self.repos = previousState.repos
         pruneUnavailableRepos()
@@ -23,7 +23,7 @@ final class RepoMonitorService: ObservableObject {
 
     func updateConfig(_ config: MonitorConfig) {
         self.config = config
-        self.gitCli = GitCLI(timeoutSeconds: config.git.fetchTimeoutSeconds)
+        self.gitCli = GitCLI()
         self.previousState = ConfigLoader.loadState(from: config)
         self.repos = previousState.repos
         pruneUnavailableRepos()
@@ -67,6 +67,75 @@ final class RepoMonitorService: ObservableObject {
         return await runScan(targetPaths: [normalizedPath])
     }
 
+    // MARK: - Pull
+
+    /// Manual pull: attempts `git pull --ff-only`, records any failure on the
+    /// snapshot's pullError, then rescans the repo to refresh its counts.
+    func pullRepo(at path: String) async -> ScanResult {
+        let normalizedPath = normalizePath(path)
+        guard !progress.isScanning, isRepoAvailable(at: normalizedPath) else {
+            return makeResult(notifications: [], scannedAt: Date(), duration: 0)
+        }
+
+        let pullError = await performPull(at: normalizedPath)
+        if var snapshot = repos.first(where: { normalizePath($0.path) == normalizedPath }) {
+            snapshot.pullError = pullError
+            upsertRepo(snapshot)
+        }
+
+        return await runScan(targetPaths: [normalizedPath])
+    }
+
+    /// Runs `git pull --ff-only` and returns a decorated error ("" on success).
+    private func performPull(at path: String) async -> String {
+        let rawRemoteUrl = await gitCli.originRemoteUrl(in: path)
+        let result = await gitCli.pull(
+            in: path,
+            remoteURL: rawRemoteUrl,
+            credential: credential(forRemoteURL: rawRemoteUrl)
+        )
+        if result.success { return "" }
+        return decoratePullError(result.error)
+    }
+
+    /// Auto pull pass: pulls every repo that is behind, has no local commits,
+    /// and has a clean working tree. Only called when autoPullEnabled is on.
+    private func autoPullPass(targetPaths: [String]) async {
+        for repoPath in targetPaths {
+            guard var snapshot = repos.first(where: { normalizePath($0.path) == repoPath }) else { continue }
+            guard snapshot.behind > 0,
+                  snapshot.ahead == 0,
+                  !snapshot.isDirty,
+                  snapshot.fetchSuccess,
+                  !snapshot.isSkipped else { continue }
+
+            progress.currentRepo = snapshot.name
+            progress.currentRepoPath = repoPath
+
+            snapshot.pullError = await performPull(at: repoPath)
+            if snapshot.pullError.isEmpty {
+                let counts = await gitCli.aheadBehind(in: repoPath)
+                snapshot.ahead = counts.ahead
+                snapshot.behind = counts.behind
+                snapshot.lastScanned = Date()
+            }
+            upsertRepo(snapshot)
+        }
+    }
+
+    private func decoratePullError(_ error: String) -> String {
+        if error.localizedCaseInsensitiveContains("not possible to fast-forward") {
+            return "Cannot fast-forward: local commits diverge from remote. Resolve manually."
+        }
+        if error.localizedCaseInsensitiveContains("would be overwritten") {
+            return "Local uncommitted changes conflict with incoming files. Commit or stash first."
+        }
+        if error.localizedCaseInsensitiveContains("no tracking information") {
+            return "Current branch has no upstream configured."
+        }
+        return error.isEmpty ? "git pull failed" : error
+    }
+
     private func runScan(targetPaths: [String]) async -> ScanResult {
         guard !progress.isScanning else {
             return makeResult(notifications: [], scannedAt: Date(), duration: 0)
@@ -107,6 +176,10 @@ final class RepoMonitorService: ObservableObject {
             }
         }
 
+        if config.git.autoPullEnabled {
+            await autoPullPass(targetPaths: uniqueTargets)
+        }
+
         repos = sortRepos(repos)
 
         let filtered = filterNotifications(notifications)
@@ -140,18 +213,18 @@ final class RepoMonitorService: ObservableObject {
             return makeSkippedSnapshot(from: previous)
         }
 
-        if config.git.fetchBeforeCompare {
-            let fetchResult = await gitCli.fetch(
-                in: path,
-                remoteURL: rawRemoteUrl,
-                credential: credential(forRemoteURL: rawRemoteUrl)
-            )
-            if consumeSkip(for: path) {
-                return makeSkippedSnapshot(from: previous)
-            }
-            snapshot.fetchSuccess = fetchResult.success
-            snapshot.fetchError = decorateFetchError(fetchResult.error, remoteURL: rawRemoteUrl)
+        let fetchResult = await gitCli.fetch(
+            in: path,
+            remoteURL: rawRemoteUrl,
+            credential: credential(forRemoteURL: rawRemoteUrl)
+        )
+        if consumeSkip(for: path) {
+            return makeSkippedSnapshot(from: previous)
         }
+        snapshot.fetchSuccess = fetchResult.success
+        // Only keep stderr when the fetch actually failed — git writes benign
+        // warnings (e.g. SSH post-quantum notices) to stderr on success too.
+        snapshot.fetchError = fetchResult.success ? "" : decorateFetchError(fetchResult.error, remoteURL: rawRemoteUrl)
 
         snapshot.branch = await gitCli.currentBranch(in: path)
         if consumeSkip(for: path) {
@@ -168,7 +241,11 @@ final class RepoMonitorService: ObservableObject {
             return makeSkippedSnapshot(from: previous)
         }
 
-        snapshot.isDirty = await gitCli.isDirty(in: path)
+        let dirtyStatus = await gitCli.dirtyStatus(in: path)
+        snapshot.isDirty = dirtyStatus.isDirty
+        snapshot.modifiedCount = dirtyStatus.modified
+        snapshot.untrackedCount = dirtyStatus.untracked
+        snapshot.dirtyFiles = dirtyStatus.sampleFiles
         if consumeSkip(for: path) {
             return makeSkippedSnapshot(from: previous)
         }
@@ -180,6 +257,10 @@ final class RepoMonitorService: ObservableObject {
 
         snapshot.ahead = counts.ahead
         snapshot.behind = counts.behind
+        if snapshot.behind == 0 {
+            // Repo caught up (pulled here or elsewhere) — stale pull errors no longer apply.
+            snapshot.pullError = ""
+        }
         snapshot.lastScanned = Date()
         return snapshot
     }

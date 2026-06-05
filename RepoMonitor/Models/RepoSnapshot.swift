@@ -12,8 +12,12 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
     var ahead: Int = 0
     var behind: Int = 0
     var isDirty: Bool = false
+    var modifiedCount: Int = 0
+    var untrackedCount: Int = 0
+    var dirtyFiles: [String] = []
     var fetchSuccess: Bool = true
     var fetchError: String = ""
+    var pullError: String = ""
     var isSkipped: Bool = false
     var lastScanned: Date = .now
 
@@ -26,8 +30,12 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         ahead: Int = 0,
         behind: Int = 0,
         isDirty: Bool = false,
+        modifiedCount: Int = 0,
+        untrackedCount: Int = 0,
+        dirtyFiles: [String] = [],
         fetchSuccess: Bool = true,
         fetchError: String = "",
+        pullError: String = "",
         isSkipped: Bool = false,
         lastScanned: Date = .now
     ) {
@@ -39,8 +47,12 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         self.ahead = ahead
         self.behind = behind
         self.isDirty = isDirty
+        self.modifiedCount = modifiedCount
+        self.untrackedCount = untrackedCount
+        self.dirtyFiles = dirtyFiles
         self.fetchSuccess = fetchSuccess
         self.fetchError = fetchError
+        self.pullError = pullError
         self.isSkipped = isSkipped
         self.lastScanned = lastScanned
     }
@@ -55,8 +67,12 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         ahead = try container.decodeIfPresent(Int.self, forKey: .ahead) ?? 0
         behind = try container.decodeIfPresent(Int.self, forKey: .behind) ?? 0
         isDirty = try container.decodeIfPresent(Bool.self, forKey: .isDirty) ?? false
+        modifiedCount = try container.decodeIfPresent(Int.self, forKey: .modifiedCount) ?? 0
+        untrackedCount = try container.decodeIfPresent(Int.self, forKey: .untrackedCount) ?? 0
+        dirtyFiles = try container.decodeIfPresent([String].self, forKey: .dirtyFiles) ?? []
         fetchSuccess = try container.decodeIfPresent(Bool.self, forKey: .fetchSuccess) ?? true
         fetchError = try container.decodeIfPresent(String.self, forKey: .fetchError) ?? ""
+        pullError = try container.decodeIfPresent(String.self, forKey: .pullError) ?? ""
         isSkipped = try container.decodeIfPresent(Bool.self, forKey: .isSkipped) ?? false
         lastScanned = try container.decodeIfPresent(Date.self, forKey: .lastScanned) ?? .now
     }
@@ -64,6 +80,28 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
     var isBehind: Bool { behind > 0 }
     var isAhead: Bool { ahead > 0 }
     var hasWarning: Bool { !fetchSuccess }
+
+    /// Short summary of why the repo is dirty, e.g. "2 modified, 1 untracked".
+    var dirtySummary: String {
+        var parts: [String] = []
+        if modifiedCount > 0 { parts.append("\(modifiedCount) modified") }
+        if untrackedCount > 0 { parts.append("\(untrackedCount) untracked") }
+        if parts.isEmpty { return isDirty ? "Uncommitted changes" : "" }
+        return parts.joined(separator: ", ")
+    }
+
+    /// Text shown in the Issues column: pull failures first, then fetch
+    /// failures, then the reason the repo is marked dirty.
+    var issueText: String {
+        if !pullError.isEmpty { return "Pull failed: \(pullError)" }
+        if !fetchSuccess {
+            return fetchError.isEmpty ? "Fetch failed" : "Fetch failed: \(fetchError)"
+        }
+        if isDirty { return dirtySummary }
+        return ""
+    }
+    var hasIssue: Bool { !issueText.isEmpty }
+    var issueIsError: Bool { !pullError.isEmpty || !fetchSuccess }
     var remoteDisplay: String { remoteUrl.isEmpty ? "—" : remoteUrl }
     var scannedDisplay: String { lastScanned.formatted(.dateTime.month().day().hour().minute()) }
     var dirtyDisplay: String { isDirty ? "Yes" : "No" }
