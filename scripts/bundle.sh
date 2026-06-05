@@ -57,6 +57,21 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
 </plist>
 PLIST
 
+# Sign with a stable identity so Keychain "Always Allow" persists across
+# rebuilds (ad-hoc signatures change every build and re-trigger prompts).
+# Uses the first valid codesigning identity found in the keychain; override
+# with REPOMONITOR_SIGN_IDENTITY if you have more than one.
+SIGN_IDENTITY="${REPOMONITOR_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null \
+    | sed -n 's/^ *1) [0-9A-F]* "\(.*\)"$/\1/p')}"
+if [ -n "$SIGN_IDENTITY" ]; then
+    echo "Signing with: $SIGN_IDENTITY"
+    codesign --force --options runtime --identifier com.humsweet.RepoMonitor \
+        --sign "$SIGN_IDENTITY" "$APP_BUNDLE"
+else
+    echo "⚠ No codesigning identity found; falling back to ad-hoc (keychain prompts will recur)"
+    codesign --force --sign - "$APP_BUNDLE"
+fi
+
 echo "✓ App bundle created at: $APP_BUNDLE"
 echo ""
 echo "To install: cp -r '$APP_BUNDLE' /Applications/"
