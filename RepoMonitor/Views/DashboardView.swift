@@ -62,6 +62,24 @@ struct DashboardView: View {
             .frame(maxWidth: 390)
 
             Button {
+                vm.addReposAndScan()
+            } label: {
+                HStack(spacing: 5) {
+                    Image(systemName: "plus")
+                        .font(.system(size: 12, weight: .bold))
+                    Text("Add Repo")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 12)
+                .frame(height: 32)
+                .background(Theme.accent)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+            }
+            .buttonStyle(.plain)
+            .help("Add a repository to monitor (⌘N)")
+
+            Button {
                 vm.showSettings = true
             } label: {
                 Image(systemName: "gear")
@@ -92,9 +110,27 @@ struct DashboardView: View {
                         .font(.system(size: 16, weight: .medium))
                         .foregroundStyle(Theme.textSecondary)
                     if vm.searchText.isEmpty {
-                        Text("Add repos to ~/.config/repo-monitor/config.json")
+                        Text("Add a git repository, or a folder of repositories, to start monitoring.")
                             .font(.system(size: 14))
                             .foregroundStyle(Theme.textTertiary)
+
+                        Button {
+                            vm.addReposAndScan()
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 13, weight: .bold))
+                                Text("Add Repository")
+                                    .font(.system(size: 14, weight: .medium))
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 9)
+                            .background(Theme.accent)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 4)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

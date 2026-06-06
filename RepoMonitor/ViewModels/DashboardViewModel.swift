@@ -234,25 +234,51 @@ final class DashboardViewModel: ObservableObject {
         NSWorkspace.shared.open(URL(fileURLWithPath: repo.path))
     }
 
-    func addScanFolders() {
+    /// Opens a folder picker and adds the chosen folders as scan roots.
+    /// Returns `true` if at least one new root was added.
+    @discardableResult
+    func addScanFolders() -> Bool {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
-        panel.message = "Select folders to scan for git repositories"
+        panel.message = "Select a git repository, or a folder containing repositories"
         panel.prompt = "Add"
-        if panel.runModal() == .OK {
-            for url in panel.urls {
-                let path = url.path
-                if !config.roots.contains(where: { $0.path == path }) {
-                    // If the folder itself is a git repo, use mode .self; otherwise .children
-                    let isGitRepo = FileManager.default.fileExists(
-                        atPath: url.appendingPathComponent(".git").path
-                    )
-                    config.roots.append(RootEntry(path: path, mode: isGitRepo ? .`self` : .children))
-                }
+        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser
+        guard panel.runModal() == .OK else { return false }
+
+        var added = false
+        for url in panel.urls {
+            let path = url.path
+            if !config.roots.contains(where: { $0.path == path }) {
+                // If the folder itself is a git repo, use mode .self; otherwise .children
+                let isGitRepo = FileManager.default.fileExists(
+                    atPath: url.appendingPathComponent(".git").path
+                )
+                config.roots.append(RootEntry(path: path, mode: isGitRepo ? .`self` : .children))
+                added = true
             }
+            // Re-watching a previously unwatched path takes precedence over the unwatch list.
+            if config.unwatchedPaths.contains(path) {
+                config.unwatchedPaths.removeAll { $0 == path }
+                added = true
+            }
+        }
+        if added {
             saveConfig()
+        }
+        return added
+    }
+
+    /// Dashboard entry point: add scan folders, then immediately rescan so the
+    /// newly added repositories show up without waiting for the next cycle.
+    func addReposAndScan() {
+        guard !progress.isScanning else {
+            addScanFolders()
+            return
+        }
+        if addScanFolders() {
+            Task { await scan() }
         }
     }
 
