@@ -1,5 +1,20 @@
 import SwiftUI
 
+// MARK: - Shared column metrics
+//
+// Header and rows both reference these so the columns stay perfectly aligned.
+// `repo` is the flexible column that absorbs any extra window width.
+private enum Col {
+    static let tag: CGFloat = 104
+    static let repoMin: CGFloat = 200
+    static let sync: CGFloat = 112
+    static let issues: CGFloat = 196
+    static let scan: CGFloat = 132
+    static let actions: CGFloat = 196
+    static let hPad: CGFloat = 16
+    static let vPad: CGFloat = 9
+}
+
 struct RepoTableView: View {
     @ObservedObject var vm: DashboardViewModel
 
@@ -19,14 +34,16 @@ struct RepoTableView: View {
                             onOpenFinder: { vm.openInFinder(repo) },
                             onUnwatch: { vm.unwatchRepo(repo) }
                         )
-                        Divider().background(Theme.border)
+                        Rectangle()
+                            .fill(Theme.border)
+                            .frame(height: 0.5)
                     }
                 } header: {
                     RepoTableHeader(vm: vm)
                 }
             }
         }
-        .background(Theme.bgCard)
+        .background(Theme.bg)
     }
 }
 
@@ -35,30 +52,37 @@ private struct RepoTableHeader: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            SortableHeader(title: "", column: .status, vm: vm)
-                .frame(width: 44)
+            SortableHeader(title: "Tag", column: .group, vm: vm)
+                .frame(width: Col.tag, alignment: .leading)
             SortableHeader(title: "Repo", column: .name, vm: vm)
-                .frame(minWidth: 160, maxWidth: 200)
-            SortableHeader(title: "Path", column: .path, vm: vm)
-                .frame(minWidth: 200, maxWidth: .infinity)
-            SortableHeader(title: "Ahead", column: .ahead, vm: vm, alignment: .trailing)
-                .frame(width: 64)
-            SortableHeader(title: "Behind", column: .behind, vm: vm, alignment: .trailing)
-                .frame(width: 64)
-            Color.clear.frame(width: 20)
-            Text("Issues")
-                .lineLimit(1)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Theme.textSecondary)
-                .frame(width: 220, alignment: .leading)
-            SortableHeader(title: "Last Scan", column: .scanned, vm: vm)
-                .frame(width: 140)
-            // Space for action buttons
-            Color.clear.frame(width: 162)
+                .frame(minWidth: Col.repoMin, maxWidth: .infinity, alignment: .leading)
+            SortableHeader(title: "Sync", column: .sync, vm: vm)
+                .frame(width: Col.sync, alignment: .leading)
+            SortableHeader(title: "Issues", column: .issue, vm: vm)
+                .frame(width: Col.issues, alignment: .leading)
+            SortableHeader(title: "Last scan", column: .scanned, vm: vm)
+                .frame(width: Col.scan, alignment: .leading)
+            Text("Actions")
+                .headerLabelStyle(active: false)
+                .frame(width: Col.actions, alignment: .trailing)
         }
-        .padding(.vertical, 8)
-        .padding(.horizontal, 16)
-        .background(Theme.bgSecondary.opacity(0.96))
+        .padding(.horizontal, Col.hPad)
+        .padding(.vertical, 7)
+        .background(Theme.bgSecondary)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(Theme.borderFocused).frame(height: 0.5)
+        }
+    }
+}
+
+private extension Text {
+    func headerLabelStyle(active: Bool) -> some View {
+        self
+            .font(.system(size: 10, weight: .medium))
+            .textCase(.uppercase)
+            .tracking(0.7)
+            .foregroundStyle(active ? Theme.textPrimary : Theme.textTertiary)
+            .lineLimit(1)
     }
 }
 
@@ -68,23 +92,28 @@ private struct SortableHeader: View {
     @ObservedObject var vm: DashboardViewModel
     var alignment: Alignment = .leading
 
+    @State private var isHovering = false
+
+    private var isActive: Bool { vm.sortColumn == column }
+
     var body: some View {
         Button {
             vm.toggleSort(by: column)
         } label: {
-            HStack(spacing: 3) {
+            HStack(spacing: 4) {
                 Text(title)
-                    .lineLimit(1)
-                if vm.sortColumn == column {
+                    .headerLabelStyle(active: isActive || isHovering)
+                if isActive {
                     Image(systemName: vm.sortAscending ? "arrow.up" : "arrow.down")
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 8, weight: .bold))
+                        .foregroundStyle(Theme.accent)
                 }
             }
-            .font(.system(size: 12, weight: .semibold))
-            .foregroundStyle(Theme.textSecondary)
             .frame(maxWidth: .infinity, alignment: alignment)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
     }
 }
 
@@ -102,7 +131,7 @@ private struct RepoTableRow: View {
     @State private var isHovering = false
 
     private var statusTooltip: String {
-        var lines: [String] = []
+        var lines: [String] = ["\(repo.name)  ·  \(repo.path)"]
         if !repo.pullError.isEmpty {
             lines.append("⚠ Pull failed: \(repo.pullError)")
         }
@@ -119,7 +148,7 @@ private struct RepoTableRow: View {
         if !repo.branch.isEmpty { lines.append("Branch: \(repo.branch)") }
         if !repo.upstream.isEmpty { lines.append("Upstream: \(repo.upstream)") }
         if !repo.remoteUrl.isEmpty { lines.append("Remote: \(repo.remoteUrl)") }
-        if lines.isEmpty { lines.append("Clean — up to date") }
+        if lines.count == 1 { lines.append("Clean — up to date") }
         return lines.joined(separator: "\n")
     }
 
@@ -135,85 +164,62 @@ private struct RepoTableRow: View {
 
     var body: some View {
         HStack(spacing: 0) {
-            // Status — colored dot only, centered
-            Circle()
-                .fill(Theme.statusColor(for: repo.statusLevel))
-                .frame(width: 9, height: 9)
-                .frame(width: 44)
-                .help(statusTooltip)
+            // Tag
+            TagBadge(label: repo.groupTag)
+                .frame(width: Col.tag, alignment: .leading)
 
-            // Repo name
-            Text(repo.name)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Theme.textPrimary)
-                .lineLimit(1)
-                .frame(minWidth: 160, maxWidth: 200, alignment: .leading)
+            // Repo — status dot + name, full detail (incl. path) on hover
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(Theme.statusColor(for: repo.statusLevel))
+                    .frame(width: 7, height: 7)
+                Text(repo.name)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            .frame(minWidth: Col.repoMin, maxWidth: .infinity, alignment: .leading)
+            .help(statusTooltip)
 
-            // Path
-            Text(repo.path)
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.textTertiary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(minWidth: 200, maxWidth: .infinity, alignment: .leading)
+            // Sync — ahead ↑ · behind ↓
+            SyncCell(ahead: repo.ahead, behind: repo.behind)
+                .frame(width: Col.sync, alignment: .leading)
 
-            // Ahead
-            Text("\(repo.ahead)")
-                .font(.system(size: 14, design: .monospaced))
-                .foregroundStyle(repo.ahead > 0 ? Theme.accent : Theme.textSecondary)
-                .frame(width: 64, alignment: .trailing)
-
-            // Behind
-            Text("\(repo.behind)")
-                .font(.system(size: 14, design: .monospaced))
-                .foregroundStyle(repo.behind > 0 ? Theme.statusBehind : Theme.textSecondary)
-                .frame(width: 64, alignment: .trailing)
-
-            // Gap between Behind and Issues
-            Color.clear.frame(width: 20)
-
-            // Issues — fixed column showing pull/fetch failures and dirty reasons
+            // Issues — pill badge
             Group {
                 if repo.hasIssue {
-                    Text(repo.issueText.replacingOccurrences(of: "\n", with: " "))
-                        .font(.system(size: 12))
-                        .foregroundStyle(repo.issueIsError ? Theme.statusError : Theme.statusDirty)
-                        .lineLimit(1)
-                        .truncationMode(.tail)
+                    IssuePill(text: repo.issueText, isError: repo.issueIsError)
                         .help(issueTooltip)
                 } else {
-                    Text("—")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.textTertiary)
+                    IssuePill.empty
                 }
             }
-            .frame(width: 220, alignment: .leading)
+            .frame(width: Col.issues, alignment: .leading)
 
-            // Last Scan
+            // Last scan
             Text(repo.scannedDisplay)
-                .font(.system(size: 14, design: .monospaced))
+                .font(.system(size: 11, design: .monospaced))
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
-                .frame(width: 140, alignment: .leading)
+                .frame(width: Col.scan, alignment: .leading)
 
-            // Action buttons (always visible)
-            HStack(spacing: 2) {
-                RowActionButton(icon: "arrow.clockwise", tooltip: "Scan", isEnabled: !isScanning, action: onScan)
-                RowActionButton(icon: "arrow.down.to.line", tooltip: "Pull (ff-only)", isEnabled: !isScanning && !isPulling, action: onPull)
-                RowActionButton(icon: "terminal", tooltip: "Terminal", action: onOpenTerminal)
-                RowActionButton(icon: "chevron.left.forwardslash.chevron.right", tooltip: "VS Code", action: onOpenVSCode)
-                RowActionButton(icon: "folder", tooltip: "Finder", action: onOpenFinder)
-                RowActionButton(icon: "eye.slash", tooltip: "Unwatch", tint: Theme.statusError, action: onUnwatch)
+            // Actions
+            HStack(spacing: 1) {
+                ActionButton(icon: "arrow.clockwise", tooltip: "Scan", isEnabled: !isScanning, action: onScan)
+                ActionButton(icon: "arrow.down.to.line", tooltip: "Pull (ff-only)", isEnabled: !isScanning && !isPulling, action: onPull)
+                ActionButton(icon: "folder", tooltip: "Finder", action: onOpenFinder)
+                ActionButton(icon: "chevron.left.forwardslash.chevron.right", tooltip: "VS Code", action: onOpenVSCode)
+                ActionButton(icon: "terminal", tooltip: "Terminal", action: onOpenTerminal)
+                ActionButton(icon: "eye.slash", tooltip: "Unwatch", isDanger: true, action: onUnwatch)
             }
-            .frame(width: 162, alignment: .trailing)
+            .frame(width: Col.actions, alignment: .trailing)
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 8)
-        .background(isHovering ? Theme.bgHover.opacity(0.5) : Color.clear)
+        .padding(.horizontal, Col.hPad)
+        .padding(.vertical, Col.vPad)
+        .background(isHovering ? Theme.bgHover : Color.clear)
         .contentShape(Rectangle())
-        .onHover { hovering in
-            isHovering = hovering
-        }
+        .onHover { isHovering = $0 }
         .contextMenu {
             Button { onScan() } label: {
                 Label("Scan This Repo", systemImage: "arrow.clockwise")
@@ -246,24 +252,147 @@ private struct RepoTableRow: View {
     }
 }
 
-private struct RowActionButton: View {
+// MARK: - Cells
+
+private struct TagBadge: View {
+    let label: String
+
+    var body: some View {
+        let color = Theme.groupColor(for: label)
+        Text(label)
+            .font(.system(size: 10))
+            .foregroundStyle(color)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2)
+            .background(color.opacity(0.12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 3)
+                    .stroke(color.opacity(0.28), lineWidth: 0.5)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 3))
+    }
+}
+
+private struct SyncCell: View {
+    let ahead: Int
+    let behind: Int
+
+    var body: some View {
+        HStack(spacing: 6) {
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.up")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("\(ahead)")
+                    .font(.system(size: 11, weight: ahead > 0 ? .semibold : .regular, design: .monospaced))
+            }
+            .foregroundStyle(ahead > 0 ? Theme.syncAhead : Theme.textTertiary)
+
+            Text("·")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.textTertiary)
+
+            HStack(spacing: 3) {
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("\(behind)")
+                    .font(.system(size: 11, weight: behind > 0 ? .semibold : .regular, design: .monospaced))
+            }
+            .foregroundStyle(behind > 0 ? Theme.syncBehind : Theme.textTertiary)
+        }
+    }
+}
+
+private struct IssuePill: View {
+    let text: String
+    let isError: Bool
+
+    static let empty = IssuePill(text: "", isError: false, isEmpty: true)
+
+    private var isEmpty = false
+
+    init(text: String, isError: Bool) {
+        self.text = text
+        self.isError = isError
+    }
+
+    private init(text: String, isError: Bool, isEmpty: Bool) {
+        self.text = text
+        self.isError = isError
+        self.isEmpty = isEmpty
+    }
+
+    private var tint: Color { isError ? Theme.statusError : Theme.statusDirty }
+
+    var body: some View {
+        if isEmpty {
+            HStack(spacing: 4) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 9, weight: .semibold))
+                Text("—")
+                    .font(.system(size: 11))
+            }
+            .foregroundStyle(Theme.textTertiary)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .overlay(
+                Capsule().stroke(Theme.border, lineWidth: 0.5)
+            )
+        } else {
+            HStack(spacing: 4) {
+                Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
+                    .font(.system(size: 9, weight: .semibold))
+                Text(text.replacingOccurrences(of: "\n", with: " "))
+                    .font(.system(size: 11))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            .foregroundStyle(tint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .background(tint.opacity(0.12))
+            .overlay(
+                Capsule().stroke(tint.opacity(0.3), lineWidth: 0.5)
+            )
+            .clipShape(Capsule())
+        }
+    }
+}
+
+private struct ActionButton: View {
     let icon: String
     let tooltip: String
     var isEnabled: Bool = true
-    var tint: Color = Theme.textSecondary
+    var isDanger: Bool = false
     let action: () -> Void
+
+    @State private var isHovering = false
+
+    private var foreground: Color {
+        guard isEnabled else { return Theme.textTertiary.opacity(0.6) }
+        if isHovering { return isDanger ? Theme.statusError : Theme.accentHover }
+        return Theme.textTertiary
+    }
+
+    private var background: Color {
+        guard isEnabled, isHovering else { return .clear }
+        return isDanger ? Theme.statusError.opacity(0.15) : Theme.accentSoft
+    }
 
     var body: some View {
         Button(action: action) {
             Image(systemName: icon)
-                .font(.system(size: 11, weight: .medium))
-                .foregroundStyle(isEnabled ? tint : Theme.textTertiary)
-                .frame(width: 24, height: 24)
-                .background(Theme.bgSecondary)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(foreground)
+                .frame(width: 26, height: 26)
+                .background(background)
+                .clipShape(RoundedRectangle(cornerRadius: 5))
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
+        .onHover { isHovering = $0 }
         .help(tooltip)
     }
 }

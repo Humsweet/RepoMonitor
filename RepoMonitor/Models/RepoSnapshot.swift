@@ -81,6 +81,24 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
     var isAhead: Bool { ahead > 0 }
     var hasWarning: Bool { !fetchSuccess }
 
+    /// Group label derived from the repo's parent folder, e.g. a repo at
+    /// `…/Github Personal/RepoMonitor` is tagged "Github Personal".
+    var groupTag: String {
+        let parent = (path as NSString).deletingLastPathComponent
+        let label = (parent as NSString).lastPathComponent
+        return label.isEmpty ? "—" : label
+    }
+
+    /// Combined divergence used for the merged Sync column sort.
+    var syncMagnitude: Int { ahead + behind }
+
+    /// Severity used for sorting the Issues column: error > attention > none.
+    var issueRank: Int {
+        if issueIsError { return 2 }
+        if hasIssue { return 1 }
+        return 0
+    }
+
     /// Short summary of why the repo is dirty, e.g. "2 modified, 1 untracked".
     var dirtySummary: String {
         var parts: [String] = []

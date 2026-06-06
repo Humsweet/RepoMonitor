@@ -6,12 +6,15 @@ import Combine
 final class DashboardViewModel: ObservableObject {
     enum RepoSortColumn {
         case status
+        case group
         case name
         case branch
         case upstream
         case remote
         case ahead
         case behind
+        case sync
+        case issue
         case dirty
         case skipped
         case scanned
@@ -19,9 +22,9 @@ final class DashboardViewModel: ObservableObject {
 
         var defaultAscending: Bool {
             switch self {
-            case .ahead, .behind, .dirty, .skipped, .scanned, .status:
+            case .ahead, .behind, .sync, .issue, .dirty, .skipped, .scanned, .status:
                 return false
-            case .name, .branch, .upstream, .remote, .path:
+            case .group, .name, .branch, .upstream, .remote, .path:
                 return true
             }
         }
@@ -35,8 +38,8 @@ final class DashboardViewModel: ObservableObject {
     @Published var scanDuration: TimeInterval = 0
     @Published var showSettings = false
     @Published var searchText = ""
-    @Published var sortColumn: RepoSortColumn = .status
-    @Published var sortAscending = false
+    @Published var sortColumn: RepoSortColumn = .group
+    @Published var sortAscending = true
     @Published var pullingPaths: Set<String> = []
 
     let service: RepoMonitorService
@@ -312,6 +315,12 @@ final class DashboardViewModel: ObservableObject {
         let result: ComparisonResult = switch sortColumn {
         case .status:
             compareInts(lhs.statusRank, rhs.statusRank)
+        case .group:
+            compareStrings(lhs.groupTag, rhs.groupTag)
+        case .sync:
+            compareInts(lhs.syncMagnitude, rhs.syncMagnitude)
+        case .issue:
+            compareInts(lhs.issueRank, rhs.issueRank)
         case .name:
             compareStrings(lhs.name, rhs.name)
         case .branch:
