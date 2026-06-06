@@ -19,6 +19,15 @@ struct RepoMonitorApp: App {
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 960, height: 640)
+        .commands {
+            CommandGroup(after: .toolbar) {
+                Button("Rescan All") {
+                    Task { await vm.scan() }
+                }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(vm.progress.isScanning)
+            }
+        }
     }
 
     init() {
