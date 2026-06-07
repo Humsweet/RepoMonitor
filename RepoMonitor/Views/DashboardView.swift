@@ -35,9 +35,12 @@ struct DashboardView: View {
 
     private var topBar: some View {
         HStack {
-            Text("RepoMonitor")
-                .font(.system(size: 18, weight: .bold))
-                .foregroundStyle(Theme.textPrimary)
+            HStack(spacing: 8) {
+                BrandIcon(size: 20)
+                Text("RepoMonitor")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(Theme.textPrimary)
+            }
 
             Spacer()
 

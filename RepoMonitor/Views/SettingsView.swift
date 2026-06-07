@@ -91,6 +91,19 @@ struct SettingsView: View {
                         .buttonStyle(.plain)
                     }
 
+                    // Startup section
+                    settingsSection("Startup") {
+                        settingsToggle("Launch at login", isOn: Binding(
+                            get: { vm.launchAtLogin },
+                            set: { vm.launchAtLogin = $0 }
+                        ))
+
+                        Text("Automatically start RepoMonitor when you log in to your Mac. Managed in System Settings › General › Login Items.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     // Notifications section
                     settingsSection("Notifications") {
                         settingsToggle("Enable notifications", isOn: $vm.config.notifications.enabled)

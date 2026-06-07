@@ -9,9 +9,12 @@ struct MenuBarView: View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("RepoMonitor")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Theme.textPrimary)
+                HStack(spacing: 6) {
+                    BrandIcon(size: 14)
+                    Text("RepoMonitor")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(Theme.textPrimary)
+                }
 
                 Spacer()
 

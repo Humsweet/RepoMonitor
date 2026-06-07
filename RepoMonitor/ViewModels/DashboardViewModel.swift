@@ -42,6 +42,15 @@ final class DashboardViewModel: ObservableObject {
     @Published var sortAscending = true
     @Published var pullingPaths: Set<String> = []
 
+    /// Launch-at-login state, backed by macOS (`SMAppService`), not config.json.
+    var launchAtLogin: Bool {
+        get { LaunchAtLoginService.isEnabled }
+        set {
+            LaunchAtLoginService.setEnabled(newValue)
+            objectWillChange.send()
+        }
+    }
+
     let service: RepoMonitorService
     private var scanTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
