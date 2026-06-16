@@ -50,7 +50,19 @@ struct MenuBarView: View {
             // Actions
             VStack(spacing: 2) {
                 MenuBarButton(title: "Open Dashboard", icon: "rectangle.3.group") {
+                    // The MenuBarExtra popover is the key window while its content
+                    // is tapped; capture it now so we can dismiss it like a native
+                    // menu once the dashboard is up.
+                    let popover = NSApp.keyWindow
                     openWindow(id: "dashboard")
+                    NSApp.activate(ignoringOtherApps: true)
+                    // Accessory apps need an explicit bring-to-front; also restore
+                    // the window if it was minimized to the Dock.
+                    for window in NSApp.windows where window.identifier?.rawValue.contains("dashboard") == true {
+                        window.deminiaturize(nil)
+                        window.makeKeyAndOrderFront(nil)
+                    }
+                    popover?.close()
                 }
                 MenuBarScanButton(isScanning: vm.progress.isScanning) {
                     Task { await vm.scan() }
