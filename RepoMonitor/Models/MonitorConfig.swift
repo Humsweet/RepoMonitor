@@ -106,6 +106,40 @@ struct NotificationConfig: Codable {
 
 struct DesktopConfig: Codable {
     var scanIntervalMinutes: Int = 10
+    var terminalApp: TerminalApp = .ghostty
+
+    init(scanIntervalMinutes: Int = 10, terminalApp: TerminalApp = .ghostty) {
+        self.scanIntervalMinutes = scanIntervalMinutes
+        self.terminalApp = terminalApp
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        scanIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .scanIntervalMinutes) ?? 10
+        terminalApp = try container.decodeIfPresent(TerminalApp.self, forKey: .terminalApp) ?? .ghostty
+    }
+}
+
+/// Third-party terminal emulator used when opening a repo in the terminal.
+/// The native Terminal.app is intentionally excluded as a user choice; it is
+/// only ever used as a last-resort fallback when no preferred app is installed.
+enum TerminalApp: String, Codable, CaseIterable {
+    case ghostty
+    case iterm
+
+    var displayName: String {
+        switch self {
+        case .ghostty: return "Ghostty"
+        case .iterm: return "iTerm"
+        }
+    }
+
+    var bundleID: String {
+        switch self {
+        case .ghostty: return "com.mitchellh.ghostty"
+        case .iterm: return "com.googlecode.iterm2"
+        }
+    }
 }
 
 struct StateConfig: Codable {

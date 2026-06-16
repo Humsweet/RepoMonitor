@@ -174,6 +174,28 @@ struct SettingsView: View {
                         }
                     }
 
+                    // Terminal section
+                    settingsSection("Terminal") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Open repos in")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Theme.textSecondary)
+
+                            Picker("", selection: $vm.config.desktop.terminalApp) {
+                                ForEach(TerminalApp.allCases, id: \.self) { app in
+                                    Text(app.displayName).tag(app)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                        }
+
+                        Text("Opens a new terminal window already changed into the repo's directory. If the selected app isn't installed, the other supported app is used, then macOS Terminal.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     // Pull section
                     settingsSection("Pull") {
                         settingsToggle("Auto pull after scan", isOn: $vm.config.git.autoPullEnabled)

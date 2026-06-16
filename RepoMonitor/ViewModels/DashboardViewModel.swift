@@ -211,11 +211,48 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func openInTerminal(_ repo: RepoSnapshot) {
-        let script = "tell application \"Terminal\" to do script \"cd '\(repo.path)'\""
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            appleScript.executeAndReturnError(&error)
+        let preferred = config.desktop.terminalApp
+        // Try the preferred app first, then the other supported app — but only
+        // ones that are actually installed. Each opens a new window already
+        // changed into the repo's directory.
+        let order = [preferred] + TerminalApp.allCases.filter { $0 != preferred }
+        for app in order where isAppInstalled(app.bundleID) {
+            if launchTerminal(app, path: repo.path) { return }
         }
+        // Last resort when no preferred app is installed: native Terminal.app.
+        runAppleScript("tell application \"Terminal\" to do script \"cd '\(repo.path)'\"")
+    }
+
+    private func isAppInstalled(_ bundleID: String) -> Bool {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil
+    }
+
+    private func launchTerminal(_ app: TerminalApp, path: String) -> Bool {
+        switch app {
+        case .ghostty:
+            // Ghostty mirrors its config keys as CLI flags; --working-directory
+            // opens the new window in the repo's directory.
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            process.arguments = ["-na", "Ghostty", "--args", "--working-directory=\(path)"]
+            return (try? process.run()) != nil
+        case .iterm:
+            return runAppleScript("""
+            tell application "iTerm"
+                activate
+                create window with default profile
+                tell current session of current window to write text "cd '\(path)'"
+            end tell
+            """)
+        }
+    }
+
+    @discardableResult
+    private func runAppleScript(_ source: String) -> Bool {
+        guard let appleScript = NSAppleScript(source: source) else { return false }
+        var error: NSDictionary?
+        appleScript.executeAndReturnError(&error)
+        return error == nil
     }
 
     func openInVSCode(_ repo: RepoSnapshot) {
