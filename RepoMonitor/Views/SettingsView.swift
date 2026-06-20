@@ -176,21 +176,23 @@ struct SettingsView: View {
 
                     // Terminal section
                     settingsSection("Terminal") {
+                        let installed = TerminalCatalog.installed()
                         VStack(alignment: .leading, spacing: 8) {
                             Text("Open repos in")
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(Theme.textSecondary)
 
-                            Picker("", selection: $vm.config.desktop.terminalApp) {
-                                ForEach(TerminalApp.allCases, id: \.self) { app in
-                                    Text(app.displayName).tag(app)
+                            Picker("", selection: $vm.config.desktop.terminalAppID) {
+                                Text("Not set").tag("")
+                                ForEach(installed) { app in
+                                    Text(app.name).tag(app.id)
                                 }
                             }
-                            .pickerStyle(.segmented)
+                            .pickerStyle(.menu)
                             .labelsHidden()
                         }
 
-                        Text("Opens a new terminal window already changed into the repo's directory. If the selected app isn't installed, the other supported app is used, then macOS Terminal.")
+                        Text("Detected terminals on this Mac are listed above. Opens a new window already changed into the repo's directory. The first time you open a repo in the terminal, you'll be asked to pick one.")
                             .font(.system(size: 11))
                             .foregroundStyle(Theme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
@@ -333,6 +335,39 @@ struct SettingsView: View {
                                             Image(systemName: "eye")
                                                 .font(.system(size: 10))
                                             Text("Re-watch")
+                                                .font(.system(size: 11, weight: .medium))
+                                        }
+                                        .foregroundStyle(Theme.accent)
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                                .padding(.vertical, 2)
+                            }
+                        }
+                    }
+
+                    // Ignored remote repos section
+                    if !vm.config.git.ignoredRemoteRepos.isEmpty {
+                        settingsSection("Ignored Remote Repos") {
+                            Text("Remote repos you chose not to clone. Re-enable one to be asked again on the next scan.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(Theme.textTertiary)
+                                .fixedSize(horizontal: false, vertical: true)
+
+                            ForEach(vm.config.git.ignoredRemoteRepos, id: \.self) { id in
+                                HStack {
+                                    Text(id)
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(Theme.textSecondary)
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Button {
+                                        vm.unignoreRemoteRepo(id)
+                                    } label: {
+                                        HStack(spacing: 4) {
+                                            Image(systemName: "arrow.uturn.backward")
+                                                .font(.system(size: 10))
+                                            Text("Re-enable")
                                                 .font(.system(size: 11, weight: .medium))
                                         }
                                         .foregroundStyle(Theme.accent)

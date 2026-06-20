@@ -59,19 +59,25 @@ struct RootEntry: Codable, Identifiable {
 struct GitConfig: Codable {
     var autoPullEnabled: Bool = false
     var hostCredentials: [GitHostCredential] = []
+    /// Canonical ids ("host/owner/name") of remote repos the user chose not to
+    /// clone. Stored so the new-repo review never asks about them again.
+    var ignoredRemoteRepos: [String] = []
 
     init(
         autoPullEnabled: Bool = false,
-        hostCredentials: [GitHostCredential] = []
+        hostCredentials: [GitHostCredential] = [],
+        ignoredRemoteRepos: [String] = []
     ) {
         self.autoPullEnabled = autoPullEnabled
         self.hostCredentials = hostCredentials
+        self.ignoredRemoteRepos = ignoredRemoteRepos
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         autoPullEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoPullEnabled) ?? false
         hostCredentials = try container.decodeIfPresent([GitHostCredential].self, forKey: .hostCredentials) ?? []
+        ignoredRemoteRepos = try container.decodeIfPresent([String].self, forKey: .ignoredRemoteRepos) ?? []
     }
 }
 
@@ -106,39 +112,38 @@ struct NotificationConfig: Codable {
 
 struct DesktopConfig: Codable {
     var scanIntervalMinutes: Int = 10
-    var terminalApp: TerminalApp = .ghostty
+    /// Bundle id of the user's chosen terminal emulator (see `TerminalCatalog`).
+    /// Empty means "not yet chosen" — the first terminal launch prompts for one.
+    var terminalAppID: String = ""
 
-    init(scanIntervalMinutes: Int = 10, terminalApp: TerminalApp = .ghostty) {
+    enum CodingKeys: String, CodingKey {
+        case scanIntervalMinutes
+        case terminalAppID
+        case terminalApp // legacy key: stored the old enum case ("ghostty"/"iterm")
+    }
+
+    init(scanIntervalMinutes: Int = 10, terminalAppID: String = "") {
         self.scanIntervalMinutes = scanIntervalMinutes
-        self.terminalApp = terminalApp
+        self.terminalAppID = terminalAppID
     }
 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         scanIntervalMinutes = try container.decodeIfPresent(Int.self, forKey: .scanIntervalMinutes) ?? 10
-        terminalApp = try container.decodeIfPresent(TerminalApp.self, forKey: .terminalApp) ?? .ghostty
-    }
-}
-
-/// Third-party terminal emulator used when opening a repo in the terminal.
-/// The native Terminal.app is intentionally excluded as a user choice; it is
-/// only ever used as a last-resort fallback when no preferred app is installed.
-enum TerminalApp: String, Codable, CaseIterable {
-    case ghostty
-    case iterm
-
-    var displayName: String {
-        switch self {
-        case .ghostty: return "Ghostty"
-        case .iterm: return "iTerm"
+        if let id = try container.decodeIfPresent(String.self, forKey: .terminalAppID) {
+            terminalAppID = id
+        } else if let legacy = try container.decodeIfPresent(String.self, forKey: .terminalApp) {
+            // Migrate the old fixed enum into the new bundle-id form.
+            terminalAppID = TerminalCatalog.legacyBundleID(for: legacy) ?? ""
+        } else {
+            terminalAppID = ""
         }
     }
 
-    var bundleID: String {
-        switch self {
-        case .ghostty: return "com.mitchellh.ghostty"
-        case .iterm: return "com.googlecode.iterm2"
-        }
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(scanIntervalMinutes, forKey: .scanIntervalMinutes)
+        try container.encode(terminalAppID, forKey: .terminalAppID)
     }
 }
 

@@ -9,6 +9,11 @@ struct DashboardView: View {
             topBar
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
+                .sheet(isPresented: $vm.showRemoteReview, onDismiss: {
+                    vm.handleRemoteReviewDismissed()
+                }) {
+                    RemoteReviewSheet(vm: vm)
+                }
 
             Divider().background(Theme.border)
 
@@ -22,12 +27,21 @@ struct DashboardView: View {
             bottomBar
                 .padding(.horizontal, 20)
                 .padding(.vertical, 8)
+                .sheet(isPresented: $vm.showTerminalPicker) {
+                    TerminalPickerSheet(vm: vm)
+                }
         }
         .frame(minWidth: 900, minHeight: 500)
         .background(Theme.bg)
         .preferredColorScheme(.dark)
         .sheet(isPresented: $vm.showSettings) {
             SettingsView(vm: vm)
+        }
+        .onAppear {
+            // Surface any pending review that arrived while the window was closed.
+            if !vm.pendingRemoteRepos.isEmpty {
+                vm.showRemoteReview = true
+            }
         }
     }
 
@@ -175,7 +189,7 @@ struct DashboardView: View {
                     .foregroundStyle(Theme.textTertiary)
             }
             Spacer()
-            Text("v1.0.0")
+            Text("v1.2.3")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textTertiary)
 

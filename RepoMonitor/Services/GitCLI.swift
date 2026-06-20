@@ -20,7 +20,8 @@ actor GitCLI {
         var success: Bool { exitCode == 0 }
     }
 
-    func run(_ arguments: [String], in directory: String) async throws -> GitResult {
+    func run(_ arguments: [String], in directory: String, timeoutOverride: Int? = nil) async throws -> GitResult {
+        let effectiveTimeout = timeoutOverride ?? timeoutSeconds
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["git"] + arguments
@@ -52,7 +53,7 @@ actor GitCLI {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 let timeoutTask = Task {
-                    try await Task.sleep(for: .seconds(timeoutSeconds))
+                    try await Task.sleep(for: .seconds(effectiveTimeout))
                     if process.isRunning {
                         process.terminate()
                     }
@@ -114,6 +115,20 @@ actor GitCLI {
             arguments += ["pull", "--ff-only"]
 
             let result = try await run(arguments, in: directory)
+            return (result.success, result.error)
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
+
+    /// Clones `url` into `destination`. Uses a long timeout since clones of
+    /// large repos take far longer than a fetch. SSH auth runs in BatchMode, so
+    /// the user's existing key/alias setup is honoured without prompts.
+    func clone(_ url: String, into destination: String) async -> (success: Bool, error: String) {
+        let parent = (destination as NSString).deletingLastPathComponent
+        try? FileManager.default.createDirectory(atPath: parent, withIntermediateDirectories: true)
+        do {
+            let result = try await run(["clone", url, destination], in: parent, timeoutOverride: 600)
             return (result.success, result.error)
         } catch {
             return (false, error.localizedDescription)

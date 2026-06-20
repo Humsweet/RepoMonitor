@@ -9,6 +9,12 @@ APP_NAME="RepoMonitor"
 BUILD_DIR="$PROJECT_DIR/.build/release"
 APP_BUNDLE="$PROJECT_DIR/build/${APP_NAME}.app"
 
+# Single source of truth for the version: read it from RepoMonitor/Info.plist
+# rather than duplicating it in the heredoc below (which drifts otherwise).
+SOURCE_PLIST="$PROJECT_DIR/RepoMonitor/Info.plist"
+SHORT_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$SOURCE_PLIST")"
+BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$SOURCE_PLIST")"
+
 echo "Building release..."
 cd "$PROJECT_DIR"
 swift build -c release 2>&1
@@ -71,6 +77,10 @@ cat > "$APP_BUNDLE/Contents/Info.plist" << 'PLIST'
 </dict>
 </plist>
 PLIST
+
+# Inject the version read from the source plist (keeps a single source of truth).
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $SHORT_VERSION" "$APP_BUNDLE/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $BUNDLE_VERSION" "$APP_BUNDLE/Contents/Info.plist"
 
 # Sign with a stable identity so Keychain "Always Allow" persists across
 # rebuilds (ad-hoc signatures change every build and re-trigger prompts).

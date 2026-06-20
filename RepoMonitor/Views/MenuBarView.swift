@@ -2,7 +2,6 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var vm: DashboardViewModel
-    @Environment(\.openWindow) private var openWindow
     @State private var scanIconRotation: Double = 0
 
     var body: some View {
@@ -52,16 +51,10 @@ struct MenuBarView: View {
                 MenuBarButton(title: "Open Dashboard", icon: "rectangle.3.group") {
                     // The MenuBarExtra popover is the key window while its content
                     // is tapped; capture it now so we can dismiss it like a native
-                    // menu once the dashboard is up.
+                    // menu once the dashboard is up. Opening itself is routed
+                    // through the shared `.openDashboard` path (MenuBarLabel).
                     let popover = NSApp.keyWindow
-                    openWindow(id: "dashboard")
-                    NSApp.activate(ignoringOtherApps: true)
-                    // Accessory apps need an explicit bring-to-front; also restore
-                    // the window if it was minimized to the Dock.
-                    for window in NSApp.windows where window.identifier?.rawValue.contains("dashboard") == true {
-                        window.deminiaturize(nil)
-                        window.makeKeyAndOrderFront(nil)
-                    }
+                    NotificationCenter.default.post(name: .openDashboard, object: nil)
                     popover?.close()
                 }
                 MenuBarScanButton(isScanning: vm.progress.isScanning) {

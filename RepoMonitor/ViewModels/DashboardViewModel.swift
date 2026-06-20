@@ -42,6 +42,17 @@ final class DashboardViewModel: ObservableObject {
     @Published var sortAscending = true
     @Published var pullingPaths: Set<String> = []
 
+    // Terminal selection (first run picks a default; changeable in Settings)
+    @Published var showTerminalPicker = false
+    @Published var availableTerminals: [TerminalApp] = []
+    private var pendingTerminalRepoPath: String?
+
+    // New-remote-repo review
+    @Published var pendingRemoteRepos: [DiscoveredRemoteRepo] = []
+    @Published var showRemoteReview = false
+    @Published var cloningRemoteIDs: Set<String> = []
+    @Published var cloneErrors: [String: String] = [:]
+
     /// Launch-at-login state, backed by macOS (`SMAppService`), not config.json.
     var launchAtLogin: Bool {
         get { LaunchAtLoginService.isEnabled }
@@ -132,6 +143,18 @@ final class DashboardViewModel: ObservableObject {
             }
             .store(in: &cancellables)
 
+        service.$pendingRemoteRepos
+            .sink { [weak self] repos in
+                guard let self else { return }
+                self.pendingRemoteRepos = repos
+                // Auto-present the review when new repos appear; harmless if the
+                // dashboard window is closed (the sheet shows on next open).
+                if !repos.isEmpty {
+                    self.showRemoteReview = true
+                }
+            }
+            .store(in: &cancellables)
+
         Task { @MainActor [weak self] in
             self?.startPeriodicScan()
         }
@@ -210,49 +233,117 @@ final class DashboardViewModel: ObservableObject {
         saveConfig()
     }
 
+    // MARK: - Remote Repo Review
+
+    func cloneRemoteRepo(_ repo: DiscoveredRemoteRepo) async {
+        guard !cloningRemoteIDs.contains(repo.id) else { return }
+        cloningRemoteIDs.insert(repo.id)
+        cloneErrors[repo.id] = nil
+        defer { cloningRemoteIDs.remove(repo.id) }
+
+        let error = await service.cloneRemoteRepo(repo)
+        if error.isEmpty {
+            if pendingRemoteRepos.isEmpty { showRemoteReview = false }
+        } else {
+            cloneErrors[repo.id] = error
+        }
+    }
+
+    /// Records that the user doesn't want this repo cloned, so it's never asked
+    /// about again, and drops it from the current review.
+    func ignoreRemoteRepo(_ repo: DiscoveredRemoteRepo) {
+        if !config.git.ignoredRemoteRepos.contains(repo.id) {
+            config.git.ignoredRemoteRepos.append(repo.id)
+        }
+        saveConfig()
+        service.dismissRemoteRepo(id: repo.id)
+        if pendingRemoteRepos.isEmpty { showRemoteReview = false }
+    }
+
+    func ignoreAllRemoteRepos() {
+        for repo in pendingRemoteRepos where !config.git.ignoredRemoteRepos.contains(repo.id) {
+            config.git.ignoredRemoteRepos.append(repo.id)
+        }
+        saveConfig()
+        for repo in pendingRemoteRepos { service.dismissRemoteRepo(id: repo.id) }
+        showRemoteReview = false
+    }
+
+    /// Closing the review without acting on a repo counts as "don't pull it,
+    /// don't ask again" — every still-pending repo is permanently ignored. Only
+    /// genuinely new repos will surface on later scans. Mistakes can be undone
+    /// via Settings › Ignored Remote Repos.
+    func handleRemoteReviewDismissed() {
+        guard !pendingRemoteRepos.isEmpty else { return }
+        for repo in pendingRemoteRepos where !config.git.ignoredRemoteRepos.contains(repo.id) {
+            config.git.ignoredRemoteRepos.append(repo.id)
+        }
+        saveConfig()
+        let ids = pendingRemoteRepos.map(\.id)
+        for id in ids { service.dismissRemoteRepo(id: id) }
+    }
+
+    func cloneAllRemoteRepos() async {
+        for repo in pendingRemoteRepos {
+            await cloneRemoteRepo(repo)
+        }
+    }
+
+    /// Removes a repo from the permanent ignore list so it can be suggested again.
+    func unignoreRemoteRepo(_ id: String) {
+        config.git.ignoredRemoteRepos.removeAll { $0 == id }
+        saveConfig()
+    }
+
+    /// Opens the repo in the user's chosen terminal. On first use (no choice
+    /// yet, or the chosen app was uninstalled) it scans installed terminals and
+    /// asks the user to pick a default, then proceeds with the launch.
     func openInTerminal(_ repo: RepoSnapshot) {
-        let preferred = config.desktop.terminalApp
-        // Try the preferred app first, then the other supported app — but only
-        // ones that are actually installed. Each opens a new window already
-        // changed into the repo's directory.
-        let order = [preferred] + TerminalApp.allCases.filter { $0 != preferred }
-        for app in order where isAppInstalled(app.bundleID) {
-            if launchTerminal(app, path: repo.path) { return }
+        let chosenID = config.desktop.terminalAppID
+        if TerminalCatalog.app(for: chosenID) != nil, TerminalCatalog.isInstalled(chosenID) {
+            launchPreferredTerminal(at: repo.path)
+            return
         }
-        // Last resort when no preferred app is installed: native Terminal.app.
-        runAppleScript("tell application \"Terminal\" to do script \"cd '\(repo.path)'\"")
+
+        let installed = TerminalCatalog.installed()
+        guard !installed.isEmpty else {
+            // Should never happen (Terminal.app is always present), but degrade
+            // gracefully rather than do nothing.
+            TerminalApp(id: "com.apple.Terminal", name: "Terminal", launch: .openDir(appName: "Terminal"))
+                .open(at: repo.path)
+            return
+        }
+
+        availableTerminals = installed
+        pendingTerminalRepoPath = repo.path
+        showTerminalPicker = true
     }
 
-    private func isAppInstalled(_ bundleID: String) -> Bool {
-        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) != nil
-    }
-
-    private func launchTerminal(_ app: TerminalApp, path: String) -> Bool {
-        switch app {
-        case .ghostty:
-            // Ghostty mirrors its config keys as CLI flags; --working-directory
-            // opens the new window in the repo's directory.
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-            process.arguments = ["-na", "Ghostty", "--args", "--working-directory=\(path)"]
-            return (try? process.run()) != nil
-        case .iterm:
-            return runAppleScript("""
-            tell application "iTerm"
-                activate
-                create window with default profile
-                tell current session of current window to write text "cd '\(path)'"
-            end tell
-            """)
+    /// Persists the chosen terminal as the default, then opens any repo whose
+    /// terminal launch was waiting on this choice.
+    func selectTerminal(_ app: TerminalApp) {
+        config.desktop.terminalAppID = app.id
+        saveConfig()
+        showTerminalPicker = false
+        if let path = pendingTerminalRepoPath {
+            pendingTerminalRepoPath = nil
+            launchPreferredTerminal(at: path)
         }
     }
 
-    @discardableResult
-    private func runAppleScript(_ source: String) -> Bool {
-        guard let appleScript = NSAppleScript(source: source) else { return false }
-        var error: NSDictionary?
-        appleScript.executeAndReturnError(&error)
-        return error == nil
+    func cancelTerminalSelection() {
+        showTerminalPicker = false
+        pendingTerminalRepoPath = nil
+    }
+
+    private func launchPreferredTerminal(at path: String) {
+        let installed = TerminalCatalog.installed()
+        if let preferred = installed.first(where: { $0.id == config.desktop.terminalAppID }),
+           preferred.open(at: path) {
+            return
+        }
+        // Chosen app vanished mid-session — fall back to any installed terminal.
+        for terminal in installed where terminal.open(at: path) { return }
     }
 
     func openInVSCode(_ repo: RepoSnapshot) {

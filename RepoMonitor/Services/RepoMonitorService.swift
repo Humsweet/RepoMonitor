@@ -5,11 +5,14 @@ final class RepoMonitorService: ObservableObject {
     @Published var progress = ScanProgress()
     @Published var repos: [RepoSnapshot] = []
     @Published var lastResult: ScanResult?
+    /// Remote repos found during the last full scan that have no local clone.
+    @Published var pendingRemoteRepos: [DiscoveredRemoteRepo] = []
 
     private var gitCli: GitCLI
     private var config: MonitorConfig
     private var previousState: PersistedState
     private var skipRequestedPath: String?
+    private var isDiscoveringRemotes = false
 
     var persistedLastScanDate: Date? { previousState.lastScanDate }
 
@@ -45,7 +48,7 @@ final class RepoMonitorService: ObservableObject {
     // MARK: - Scan
 
     func scan() async -> ScanResult {
-        await runScan(targetPaths: scanCandidates())
+        await runScan(targetPaths: scanCandidates(), discoverRemotes: true)
     }
 
     func scanRepo(at path: String) async -> ScanResult {
@@ -136,7 +139,7 @@ final class RepoMonitorService: ObservableObject {
         return error.isEmpty ? "git pull failed" : error
     }
 
-    private func runScan(targetPaths: [String]) async -> ScanResult {
+    private func runScan(targetPaths: [String], discoverRemotes: Bool = false) async -> ScanResult {
         guard !progress.isScanning else {
             return makeResult(notifications: [], scannedAt: Date(), duration: 0)
         }
@@ -198,7 +201,46 @@ final class RepoMonitorService: ObservableObject {
 
         progress = ScanProgress()
         lastResult = result
+
+        // Remote discovery runs after the scan UI has settled so it never holds
+        // up the scan; results flow in asynchronously via pendingRemoteRepos.
+        if discoverRemotes {
+            Task { await self.runRemoteDiscovery() }
+        }
+
         return result
+    }
+
+    // MARK: - Remote Discovery & Clone
+
+    /// Lists each mapped account's remote repos and surfaces the ones missing
+    /// locally. Failures are swallowed so a flaky network never breaks scanning.
+    func runRemoteDiscovery() async {
+        guard !isDiscoveringRemotes else { return }
+        isDiscoveringRemotes = true
+        defer { isDiscoveringRemotes = false }
+
+        let found = await RemoteRepoDiscovery.discover(config: config, repos: repos)
+        let ignored = Set(config.git.ignoredRemoteRepos.map { $0.lowercased() })
+        pendingRemoteRepos = found.filter { !ignored.contains($0.id.lowercased()) }
+    }
+
+    /// Clones a discovered repo into its target folder, then scans it so it
+    /// appears in the list. Returns "" on success or a decorated error.
+    func cloneRemoteRepo(_ repo: DiscoveredRemoteRepo) async -> String {
+        let result = await gitCli.clone(repo.cloneURL, into: repo.targetPath)
+        guard result.success else {
+            return result.error.isEmpty ? "git clone failed" : result.error
+        }
+        pendingRemoteRepos.removeAll { $0.id == repo.id }
+        _ = await scanRepo(at: repo.targetPath)
+        return ""
+    }
+
+    /// Removes a repo from the pending list without touching the ignore list
+    /// (the caller persists the ignore decision in config).
+    func dismissRemoteRepo(id: String) {
+        pendingRemoteRepos.removeAll { $0.id == id }
     }
 
     private func scanSnapshot(for path: String, previous: RepoSnapshot) async -> RepoSnapshot {
