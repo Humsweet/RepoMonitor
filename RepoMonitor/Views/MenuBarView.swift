@@ -34,6 +34,23 @@ struct MenuBarView: View {
 
             Divider().background(Theme.border)
 
+            // Offline / reconnect indicator
+            if !vm.isOnline {
+                HStack(spacing: 6) {
+                    Image(systemName: "wifi.slash")
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.statusError)
+                    Text("Offline — scanning paused, resumes on reconnect")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textSecondary)
+                    Spacer()
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 6)
+
+                Divider().background(Theme.border)
+            }
+
             // Quick stats
             HStack(spacing: 16) {
                 MiniStat(value: vm.totalCount, label: "repos", color: Theme.accent)

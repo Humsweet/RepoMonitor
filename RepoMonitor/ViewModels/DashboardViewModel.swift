@@ -42,6 +42,10 @@ final class DashboardViewModel: ObservableObject {
     @Published var sortAscending = true
     @Published var pullingPaths: Set<String> = []
 
+    /// Network reachability, mirrored from `NetworkMonitor`. Drives the offline
+    /// indicator and gates the periodic scan loop.
+    @Published var isOnline = true
+
     // Terminal selection (first run picks a default; changeable in Settings)
     @Published var showTerminalPicker = false
     @Published var availableTerminals: [TerminalApp] = []
@@ -63,6 +67,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     let service: RepoMonitorService
+    private let networkMonitor = NetworkMonitor()
     private var scanTimer: Timer?
     private var cancellables = Set<AnyCancellable>()
     private var hasStarted = false
@@ -94,6 +99,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     var menuBarIcon: String {
+        if !isOnline { return "wifi.slash" }
         if progress.isScanning { return "arrow.triangle.2.circlepath" }
         switch overallStatus {
         case .clean: return "checkmark.circle"
@@ -104,6 +110,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     var menuBarLabel: String {
+        if !isOnline { return "Offline" }
         if progress.isScanning { return "Scanning..." }
         if repos.isEmpty { return "No repos" }
         let issues = behindCount + dirtyCount + warningCount
@@ -157,6 +164,7 @@ final class DashboardViewModel: ObservableObject {
 
         Task { @MainActor [weak self] in
             self?.startPeriodicScan()
+            self?.startNetworkMonitoring()
         }
     }
 
@@ -168,10 +176,16 @@ final class DashboardViewModel: ObservableObject {
         NotificationService.shared.requestPermission()
         ConfigLoader.createDefaultConfigIfNeeded()
 
-        // Initial scan
-        Task { await scan() }
+        // While offline, skip the initial scan and leave the timer disarmed —
+        // the reconnect edge kicks off the first scan once connectivity returns.
+        if isOnline {
+            Task { await scan() }
+            armScanTimer()
+        }
+    }
 
-        // Periodic timer
+    private func armScanTimer() {
+        scanTimer?.invalidate()
         let interval = TimeInterval(config.desktop.scanIntervalMinutes * 60)
         scanTimer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -184,6 +198,41 @@ final class DashboardViewModel: ObservableObject {
         scanTimer?.invalidate()
         scanTimer = nil
         hasStarted = false
+    }
+
+    // MARK: - Network Reconnect
+
+    /// Bridges `NetworkMonitor` into the scan loop: pause periodic fetching while
+    /// offline, and on reconnect run an immediate catch-up scan (fetch +
+    /// auto-pull, which still honors `config.git.autoPullEnabled`) before
+    /// resuming the timer.
+    private func startNetworkMonitoring() {
+        networkMonitor.onReconnect = { [weak self] in
+            self?.handleNetworkReconnected()
+        }
+        networkMonitor.$isOnline
+            .removeDuplicates()
+            .sink { [weak self] online in
+                guard let self else { return }
+                self.isOnline = online
+                if !online { self.pauseScanForOffline() }
+            }
+            .store(in: &cancellables)
+        networkMonitor.start()
+    }
+
+    /// Network dropped — stop the periodic loop; every scan would just fail until
+    /// connectivity returns.
+    private func pauseScanForOffline() {
+        scanTimer?.invalidate()
+        scanTimer = nil
+    }
+
+    /// Network came back after a drop — catch up right away, then resume the loop.
+    private func handleNetworkReconnected() {
+        guard hasStarted else { return }
+        Task { await scan() }
+        if scanTimer == nil { armScanTimer() }
     }
 
     func scan() async {
