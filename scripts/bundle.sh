@@ -98,6 +98,7 @@ else
 fi
 
 echo "✓ App bundle created at: $APP_BUNDLE"
-echo ""
-echo "To install: cp -r '$APP_BUNDLE' /Applications/"
-echo "To run: open '$APP_BUNDLE'"
+
+echo "Installing to /Applications/..."
+cp -r "$APP_BUNDLE" /Applications/
+echo "✓ Installed at: /Applications/${APP_NAME}.app"

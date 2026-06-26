@@ -4,6 +4,7 @@ import SwiftUI
 /// opening repos. The choice is saved and can be changed later in Settings.
 struct TerminalPickerSheet: View {
     @ObservedObject var vm: DashboardViewModel
+    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -81,6 +82,6 @@ struct TerminalPickerSheet: View {
         }
         .frame(width: 380, height: 420)
         .background(Theme.bg)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(theme.mode.colorScheme)
     }
 }

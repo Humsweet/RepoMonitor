@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     @ObservedObject var vm: DashboardViewModel
+    @ObservedObject private var theme = ThemeManager.shared
     @State private var scanIconRotation: Double = 0
 
     var body: some View {
@@ -97,6 +98,7 @@ struct MenuBarView: View {
         }
         .frame(width: 300)
         .background(Theme.bg)
+        .preferredColorScheme(theme.mode.colorScheme)
     }
 }
 

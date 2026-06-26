@@ -2,6 +2,7 @@ import SwiftUI
 
 struct DashboardView: View {
     @ObservedObject var vm: DashboardViewModel
+    @ObservedObject private var theme = ThemeManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,7 +34,7 @@ struct DashboardView: View {
         }
         .frame(minWidth: 900, minHeight: 500)
         .background(Theme.bg)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(theme.mode.colorScheme)
         .sheet(isPresented: $vm.showSettings) {
             SettingsView(vm: vm)
         }

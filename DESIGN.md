@@ -1,58 +1,73 @@
 # RepoMonitor — Design Tokens
 
-Warm-dark "terminal" aesthetic: neutral charcoal surfaces, a single red
-accent, earthy muted text, and status collapsed to three signals
-(clean / attention / error). Source of truth is `RepoMonitor/Views/Theme.swift`;
-this document mirrors it so designers and agents have a flat reference.
+Warm "terminal" aesthetic in **two appearances** that share one identity:
+neutral surfaces, a single red accent, earthy muted text, and status collapsed
+to three signals (clean / attention / error). The **dark** side is the original
+warm-charcoal terminal look; the **light** side is a warm "paper" tone (ivory
+surfaces, espresso text) tuned for readability on bright screens. Source of
+truth is `RepoMonitor/Views/Theme.swift`; this document mirrors it so designers
+and agents have a flat reference.
+
+## Appearance modes
+A single `ThemeManager` (persisted in `UserDefaults`, key
+`RepoMonitor.themeMode`) drives the whole app from one switch — `NSApp.appearance`
+— so every window, the menu-bar popover, sheets, and system controls flip
+together. `ThemeMode` is `system` (follow macOS) / `light` / `dark`, chosen in
+Settings › Appearance and applied immediately (no Save).
+
+Each token below is a **dynamic color** with a light and a dark value (see
+`Color.themed(_:_:)`); views reference tokens only and never branch on mode.
 
 ## Color
 
 ### Surfaces
-| Token | Hex | Use |
-|---|---|---|
-| `bg` | `#141414` | Window background, table body rows |
-| `bgSecondary` | `#1C1C1C` | Table header row, control surfaces |
-| `bgTertiary` | `#242424` | Raised surfaces |
-| `bgCard` | `#1C1C1C` | Inputs, cards (search field, gear button) |
-| `bgHover` | `#242424` | Row / control hover fill |
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `bg` | `#F7F3EC` | `#141414` | Window background, table body rows |
+| `bgSecondary` | `#EFEAE0` | `#1C1C1C` | Table header row, control surfaces |
+| `bgTertiary` | `#E7E1D4` | `#242424` | Raised surfaces |
+| `bgCard` | `#FFFDF9` | `#1C1C1C` | Inputs, cards (search field, gear button) |
+| `bgHover` | `#EBE4D6` | `#242424` | Row / control hover fill |
 
 ### Text (earthy, low-chroma)
-| Token | Hex | Use |
-|---|---|---|
-| `textPrimary` | `#E8E6E3` | Repo names, primary labels |
-| `textSecondary` | `#7A7672` | Secondary text, last-scan timestamps |
-| `textTertiary` | `#4A4845` | Dim labels, placeholders, zero-value sync, empty states |
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `textPrimary` | `#2B2723` | `#E8E6E3` | Repo names, primary labels |
+| `textSecondary` | `#6E6760` | `#7A7672` | Secondary text, last-scan timestamps |
+| `textTertiary` | `#968D80` | `#4A4845` | Dim labels, placeholders, zero-value sync, empty states |
 
 ### Accent (single red)
-| Token | Hex | Use |
-|---|---|---|
-| `accent` | `#C0392B` | Scan button, active sort arrow, primary action |
-| `accentHover` | `#D95F50` | Action-button hover foreground |
-| `accentSoft` | `rgba(192,57,43,0.15)` | Action-button hover fill |
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `accent` | `#C0392B` | `#C0392B` | Scan button, active sort arrow, primary action |
+| `accentHover` | `#9E2E22` | `#D95F50` | Action-button hover foreground |
+| `accentSoft` | red @ 12% | red @ 15% | Action-button hover fill |
 
 ### Status — three signals only
-| Level | Token | Hex | Meaning |
-|---|---|---|---|
-| clean | `statusClean` | `#7DAA6E` (green) | Up to date, no local changes |
-| attention | `statusDirty` / `statusBehind` | `#C9963A` (amber) | Dirty working tree, or behind remote |
-| error | `statusError` | `#D95F50` (red) | Fetch/pull failed |
+| Level | Token | Light | Dark | Meaning |
+|---|---|---|---|---|
+| clean | `statusClean` | `#3F7A35` | `#7DAA6E` | Up to date, no local changes |
+| attention | `statusDirty` / `statusBehind` | `#9A6B16` | `#C9963A` | Dirty working tree, or behind remote |
+| error | `statusError` | `#BE3B2C` | `#D95F50` | Fetch/pull failed |
 
-Sync arrows: `syncAhead` = amber `#C9963A`, `syncBehind` = red `#D95F50`
-(both fall back to `textTertiary` when the count is 0).
+Sync arrows: `syncAhead` = amber (`#9A6B16` / `#C9963A`), `syncBehind` = red
+(`#BE3B2C` / `#D95F50`); both fall back to `textTertiary` when the count is 0.
 
 ### Borders
-| Token | Value |
-|---|---|
-| `border` | `rgba(255,255,255,0.07)` — row dividers |
-| `borderFocused` | `rgba(255,255,255,0.12)` — card outline, header underline, focus |
+| Token | Light | Dark | Use |
+|---|---|---|---|
+| `border` | black @ 10% | white @ 7% | Row dividers |
+| `borderFocused` | black @ 16% | white @ 12% | Card outline, header underline, focus |
 
 ### Tag (group) palette
 Each distinct group folder (e.g. `Github Personal`, `Bitbucket`, `Github Work`)
 gets a **stable** tint via a hash of its name, so badges are distinguishable
-without becoming a rainbow. Deliberately desaturated:
+without becoming a rainbow. Deliberately desaturated; light tints are deepened
+so colored text stays legible on the ivory surface (light / dark):
 
-`#8A8580` warm gray · `#9A7B5A` tan · `#6E8A7D` sage · `#A06A6A` dusty rose ·
-`#7D7A9A` muted periwinkle · `#9A8F5A` olive gold
+`#6B655D`/`#8A8580` warm gray · `#8A6536`/`#9A7B5A` tan · `#43705B`/`#6E8A7D` sage ·
+`#8F4B4B`/`#A06A6A` dusty rose · `#565380`/`#7D7A9A` muted periwinkle ·
+`#756A2C`/`#9A8F5A` olive gold
 
 Rendered as: text = tint, fill = tint @ 12%, border = tint @ 28%.
 

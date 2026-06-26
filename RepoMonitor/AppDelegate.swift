@@ -11,6 +11,10 @@ extension Notification.Name {
 /// and reverts to a menu-bar-only accessory once it closes.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // Apply the saved appearance globally before any window draws so the
+        // first frame already matches the user's chosen theme.
+        ThemeManager.shared.apply()
+
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(windowWillClose(_:)),

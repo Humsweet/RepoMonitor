@@ -4,6 +4,7 @@ import SwiftUI
 /// locally. The user clones or ignores each (ignore is remembered permanently).
 struct RemoteReviewSheet: View {
     @ObservedObject var vm: DashboardViewModel
+    @ObservedObject private var theme = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
 
     private var groups: [(folder: String, repos: [DiscoveredRemoteRepo])] {
@@ -36,7 +37,7 @@ struct RemoteReviewSheet: View {
         }
         .frame(width: 560, height: 600)
         .background(Theme.bg)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(theme.mode.colorScheme)
     }
 
     // MARK: - Sections

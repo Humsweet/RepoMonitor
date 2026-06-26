@@ -2,6 +2,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @ObservedObject var vm: DashboardViewModel
+    @ObservedObject private var theme = ThemeManager.shared
     @Environment(\.dismiss) private var dismiss
     @State private var credentialHost = ""
     @State private var credentialUsername = ""
@@ -35,6 +36,28 @@ struct SettingsView: View {
 
             ScrollView {
                 VStack(spacing: 20) {
+                    // Appearance section
+                    settingsSection("Appearance") {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Theme")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(Theme.textSecondary)
+
+                            Picker("", selection: $theme.mode) {
+                                ForEach(ThemeMode.allCases) { mode in
+                                    Text(mode.label).tag(mode)
+                                }
+                            }
+                            .pickerStyle(.segmented)
+                            .labelsHidden()
+                        }
+
+                        Text("Choose a light or dark appearance, or follow your Mac's system setting. Applies immediately.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     // Scan Folders section
                     settingsSection("Scan Folders") {
                         if vm.config.roots.isEmpty {
@@ -445,7 +468,7 @@ struct SettingsView: View {
         }
         .frame(width: 480, height: 620)
         .background(Theme.bg)
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(theme.mode.colorScheme)
     }
 
     // MARK: - Helpers
