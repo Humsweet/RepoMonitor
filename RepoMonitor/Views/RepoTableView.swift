@@ -15,6 +15,18 @@ private enum Col {
     static let vPad: CGFloat = 9
 }
 
+/// Layout facts other views need. Derives the minimum table width from the
+/// column metrics above so the window's minimum width stays correct when a
+/// column changes — a single source of truth instead of a magic number.
+enum RepoTable {
+    /// Width needed to show every column at its size (repo column at its floor),
+    /// including the table's own horizontal padding. Excludes any outer chrome.
+    static var minContentWidth: CGFloat {
+        Col.tag + Col.repoMin + Col.sync + Col.issues + Col.scan + Col.actions
+            + Col.hPad * 2
+    }
+}
+
 struct RepoTableView: View {
     @ObservedObject var vm: DashboardViewModel
 

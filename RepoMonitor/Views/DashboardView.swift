@@ -4,12 +4,19 @@ struct DashboardView: View {
     @ObservedObject var vm: DashboardViewModel
     @ObservedObject private var theme = ThemeManager.shared
 
+    /// Horizontal inset applied to each section (top bar, list, bottom bar).
+    /// Also feeds the window's minimum width so the two never drift apart.
+    private let contentHPad: CGFloat = 20
+
     var body: some View {
         VStack(spacing: 0) {
             // Top bar
             topBar
                 .padding(.horizontal, 20)
                 .padding(.vertical, 12)
+                // Re-enable native title-bar drag + double-click zoom/minimize
+                // behind the custom top bar (lost under `.hiddenTitleBar`).
+                .background(WindowControlArea())
                 .sheet(isPresented: $vm.showRemoteReview, onDismiss: {
                     vm.handleRemoteReviewDismissed()
                 }) {
@@ -20,7 +27,7 @@ struct DashboardView: View {
 
             // Repo list (full width)
             repoList
-                .padding(.horizontal, 20)
+                .padding(.horizontal, contentHPad)
                 .padding(.top, 12)
                 .padding(.bottom, 8)
 
@@ -32,7 +39,9 @@ struct DashboardView: View {
                     TerminalPickerSheet(vm: vm)
                 }
         }
-        .frame(minWidth: 900, minHeight: 500)
+        // Floor the window at the width that shows every table column in full
+        // (derived from the column metrics, plus this view's side insets).
+        .frame(minWidth: RepoTable.minContentWidth + contentHPad * 2, minHeight: 500)
         .background(Theme.bg)
         .preferredColorScheme(theme.mode.colorScheme)
         .sheet(isPresented: $vm.showSettings) {

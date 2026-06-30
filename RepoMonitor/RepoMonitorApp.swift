@@ -19,13 +19,20 @@ struct RepoMonitorApp: App {
             DashboardView(vm: vm)
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 960, height: 640)
+        .defaultSize(width: 1100, height: 640)
         .commands {
             // RepoMonitor lives in the menu bar, so ⌘Q closes the window and
             // returns to a menu-bar-only accessory instead of quitting. The real
             // Quit stays in the menu-bar popover. This only rebinds the menu
             // command — system logout/shutdown still terminate normally.
             CommandGroup(replacing: .appTermination) {
+                // Both ⌘W and ⌘Q close the window and return to a menu-bar-only
+                // accessory; the app stays resident. ⌘W is the macOS standard,
+                // ⌘Q matches the muscle memory of quitting.
+                Button("Close Window") {
+                    DashboardWindowPresenter.dismiss()
+                }
+                .keyboardShortcut("w", modifiers: .command)
                 Button("Close Window") {
                     DashboardWindowPresenter.dismiss()
                 }
