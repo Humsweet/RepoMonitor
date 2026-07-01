@@ -13,7 +13,6 @@ struct TerminalApp: Identifiable, Equatable {
     enum LaunchStrategy {
         /// `open -a <appName> <dir>` — the app opens a new window at the path.
         case openDir(appName: String)
-        case ghostty(appName: String)
         case wezterm(appName: String)
         case kitty(appName: String)
         case alacritty(appName: String)
@@ -27,8 +26,6 @@ struct TerminalApp: Identifiable, Equatable {
         switch launch {
         case .openDir(let appName):
             return Self.runOpen(["-a", appName, path])
-        case .ghostty(let appName):
-            return Self.runOpen(["-na", appName, "--args", "--working-directory=\(path)"])
         case .wezterm(let appName):
             return Self.runOpen(["-na", appName, "--args", "start", "--cwd", path])
         case .kitty(let appName):
@@ -68,7 +65,7 @@ enum TerminalCatalog {
     /// All terminals the app can drive, in a sensible preference order. macOS
     /// Terminal.app is always present, so it guarantees a non-empty install set.
     static let known: [TerminalApp] = [
-        TerminalApp(id: "com.mitchellh.ghostty", name: "Ghostty", launch: .ghostty(appName: "Ghostty")),
+        TerminalApp(id: "com.mitchellh.ghostty", name: "Ghostty", launch: .openDir(appName: "Ghostty")),
         TerminalApp(id: "com.googlecode.iterm2", name: "iTerm", launch: .iterm),
         TerminalApp(id: "dev.warp.Warp-Stable", name: "Warp", launch: .openDir(appName: "Warp")),
         TerminalApp(id: "com.github.wez.wezterm", name: "WezTerm", launch: .wezterm(appName: "WezTerm")),
