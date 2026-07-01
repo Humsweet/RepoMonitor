@@ -27,6 +27,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
             NotificationCenter.default.post(name: .openDashboard, object: nil)
         }
+
+        // Prune superseded self-update archives once the new version has proven
+        // stable. Delayed so a crash-looping bad build never deletes the archive
+        // that could roll it back.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 60) {
+            Task { @MainActor in SelfUpdateService.shared.performStartupMaintenance() }
+        }
     }
 
     /// Clicking the app in the Dock / Launchpad / Spotlight while it's already

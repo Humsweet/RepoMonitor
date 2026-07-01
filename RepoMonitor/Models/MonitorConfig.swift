@@ -58,6 +58,11 @@ struct RootEntry: Codable, Identifiable {
 
 struct GitConfig: Codable {
     var autoPullEnabled: Bool = false
+    /// When on, a pull that advances RepoMonitor's own source with build-affecting
+    /// changes rebuilds and relaunches the app automatically. Only ever acts on
+    /// RepoMonitor itself. Defaults on; an escape hatch for users who want manual
+    /// control over restarts.
+    var selfUpdateEnabled: Bool = true
     var hostCredentials: [GitHostCredential] = []
     /// Canonical ids ("host/owner/name") of remote repos the user chose not to
     /// clone. Stored so the new-repo review never asks about them again.
@@ -65,10 +70,12 @@ struct GitConfig: Codable {
 
     init(
         autoPullEnabled: Bool = false,
+        selfUpdateEnabled: Bool = true,
         hostCredentials: [GitHostCredential] = [],
         ignoredRemoteRepos: [String] = []
     ) {
         self.autoPullEnabled = autoPullEnabled
+        self.selfUpdateEnabled = selfUpdateEnabled
         self.hostCredentials = hostCredentials
         self.ignoredRemoteRepos = ignoredRemoteRepos
     }
@@ -76,6 +83,7 @@ struct GitConfig: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         autoPullEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoPullEnabled) ?? false
+        selfUpdateEnabled = try container.decodeIfPresent(Bool.self, forKey: .selfUpdateEnabled) ?? true
         hostCredentials = try container.decodeIfPresent([GitHostCredential].self, forKey: .hostCredentials) ?? []
         ignoredRemoteRepos = try container.decodeIfPresent([String].self, forKey: .ignoredRemoteRepos) ?? []
     }

@@ -99,6 +99,13 @@ fi
 
 echo "✓ App bundle created at: $APP_BUNDLE"
 
-echo "Installing to /Applications/..."
-cp -r "$APP_BUNDLE" /Applications/
-echo "✓ Installed at: /Applications/${APP_NAME}.app"
+# The in-app self-updater builds with REPOMONITOR_SKIP_INSTALL=1 and performs
+# its own archive + swap into the running bundle's location, so it must not
+# touch /Applications here.
+if [ "${REPOMONITOR_SKIP_INSTALL:-0}" = "1" ]; then
+    echo "REPOMONITOR_SKIP_INSTALL=1 — skipping /Applications install (self-update handles the swap)"
+else
+    echo "Installing to /Applications/..."
+    cp -r "$APP_BUNDLE" /Applications/
+    echo "✓ Installed at: /Applications/${APP_NAME}.app"
+fi

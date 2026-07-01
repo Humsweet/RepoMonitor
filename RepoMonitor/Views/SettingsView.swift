@@ -229,6 +229,13 @@ struct SettingsView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(Theme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
+
+                        settingsToggle("Auto-update RepoMonitor", isOn: $vm.config.git.selfUpdateEnabled)
+
+                        Text("When RepoMonitor's own repository is pulled and the changes affect the built app (Swift sources, Package.swift, build scripts, assets), it rebuilds and relaunches automatically. The previous version is archived and deleted 30 days after the new one has been running.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
                     }
 
                     settingsSection("Git Credentials") {

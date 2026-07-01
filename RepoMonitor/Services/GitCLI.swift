@@ -201,6 +201,25 @@ actor GitCLI {
         return DirtyStatus(modified: modified, untracked: untracked, sampleFiles: samples)
     }
 
+    /// Current HEAD commit SHA ("" on failure). Used by self-update to detect
+    /// whether a pull actually advanced the local repo.
+    func headSHA(in directory: String) async -> String {
+        guard let result = try? await run(["rev-parse", "HEAD"], in: directory),
+              result.success else { return "" }
+        return result.output
+    }
+
+    /// Paths (repo-relative) that changed between `oldSHA` and the current HEAD.
+    func changedFiles(in directory: String, from oldSHA: String) async -> [String] {
+        guard !oldSHA.isEmpty,
+              let result = try? await run(["diff", "--name-only", "\(oldSHA)..HEAD"], in: directory),
+              result.success else { return [] }
+        return result.output
+            .split(separator: "\n")
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
     func aheadBehind(in directory: String) async -> (ahead: Int, behind: Int) {
         guard let result = try? await run(["rev-list", "--left-right", "--count", "HEAD...@{u}"], in: directory),
               result.success else { return (0, 0) }

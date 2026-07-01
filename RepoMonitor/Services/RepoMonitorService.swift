@@ -90,15 +90,30 @@ final class RepoMonitorService: ObservableObject {
     }
 
     /// Runs `git pull --ff-only` and returns a decorated error ("" on success).
+    /// When the pulled repo is RepoMonitor's own source and the pull advanced it
+    /// with build-affecting changes, hands off to `SelfUpdateService` to rebuild
+    /// and relaunch. This is the single choke point for both manual and auto pull.
     private func performPull(at path: String) async -> String {
         let rawRemoteUrl = await gitCli.originRemoteUrl(in: path)
+
+        let selfUpdateCandidate = config.git.selfUpdateEnabled && SelfUpdateService.isSelfRepo(path)
+        let preSHA = selfUpdateCandidate ? await gitCli.headSHA(in: path) : ""
+
         let result = await gitCli.pull(
             in: path,
             remoteURL: rawRemoteUrl,
             credential: credential(forRemoteURL: rawRemoteUrl)
         )
-        if result.success { return "" }
-        return decoratePullError(result.error)
+        guard result.success else { return decoratePullError(result.error) }
+
+        if selfUpdateCandidate, !preSHA.isEmpty {
+            let postSHA = await gitCli.headSHA(in: path)
+            if !postSHA.isEmpty, postSHA != preSHA {
+                let changed = await gitCli.changedFiles(in: path, from: preSHA)
+                SelfUpdateService.shared.handlePostPull(repoPath: path, changedFiles: changed)
+            }
+        }
+        return ""
     }
 
     /// Auto pull pass: pulls every repo that is behind, has no local commits,
