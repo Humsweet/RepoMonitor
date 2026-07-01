@@ -4,6 +4,9 @@ struct DashboardView: View {
     @ObservedObject var vm: DashboardViewModel
     @ObservedObject private var theme = ThemeManager.shared
 
+    /// Drives ⌘F: pressing it moves keyboard focus into the search field.
+    @FocusState private var isSearchFocused: Bool
+
     /// Horizontal inset applied to each section (top bar, list, bottom bar).
     /// Also feeds the window's minimum width so the two never drift apart.
     private let contentHPad: CGFloat = 20
@@ -42,6 +45,13 @@ struct DashboardView: View {
         // Floor the window at the width that shows every table column in full
         // (derived from the column metrics, plus this view's side insets).
         .frame(minWidth: RepoTable.minContentWidth + contentHPad * 2, minHeight: 500)
+        // ⌘F focuses the search field for an immediately-active search. A hidden
+        // zero-size button is the standard SwiftUI way to bind a global shortcut.
+        .background(
+            Button("") { isSearchFocused = true }
+                .keyboardShortcut("f", modifiers: .command)
+                .hidden()
+        )
         .background(Theme.bg)
         .preferredColorScheme(theme.mode.colorScheme)
         .sheet(isPresented: $vm.showSettings) {
@@ -77,6 +87,12 @@ struct DashboardView: View {
                     .font(.system(size: 14))
                     .textFieldStyle(.plain)
                     .foregroundStyle(Theme.textPrimary)
+                    .focused($isSearchFocused)
+                    // Esc while searching: clear the query and drop focus.
+                    .onExitCommand {
+                        vm.searchText = ""
+                        isSearchFocused = false
+                    }
             }
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
