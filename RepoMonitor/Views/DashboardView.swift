@@ -1,11 +1,19 @@
 import SwiftUI
 
+/// Keyboard-focus regions on the dashboard. Arrow keys move focus between the
+/// search field and the repo list; ⌘1–⌘6 only act while the list is focused.
+enum DashboardFocus: Hashable {
+    case search
+    case list
+}
+
 struct DashboardView: View {
     @ObservedObject var vm: DashboardViewModel
     @ObservedObject private var theme = ThemeManager.shared
 
-    /// Drives ⌘F: pressing it moves keyboard focus into the search field.
-    @FocusState private var isSearchFocused: Bool
+    /// Tracks which region owns the keyboard. ⌘F focuses the search field;
+    /// arrowing down from there moves focus (and selection) into the list.
+    @FocusState private var focus: DashboardFocus?
 
     /// Horizontal inset applied to each section (top bar, list, bottom bar).
     /// Also feeds the window's minimum width so the two never drift apart.
@@ -48,10 +56,29 @@ struct DashboardView: View {
         // ⌘F focuses the search field for an immediately-active search. A hidden
         // zero-size button is the standard SwiftUI way to bind a global shortcut.
         .background(
-            Button("") { isSearchFocused = true }
+            Button("") { focus = .search }
                 .keyboardShortcut("f", modifiers: .command)
                 .hidden()
         )
+        // ⌘1–⌘6 fire the selected row's action buttons by position, but only
+        // while the list is focused. Hidden shortcut buttons deliver Command
+        // combos reliably (unlike `.onKeyPress`), and reading `focus` in the
+        // action keeps them scoped to the list.
+        .background(rowActionShortcuts)
+        // Unwatch is destructive, so it always routes through this confirmation
+        // — whether triggered by the row button, the context menu, or ⌘6.
+        .alert(
+            "Unwatch \(vm.repoPendingUnwatch?.name ?? "")?",
+            isPresented: Binding(
+                get: { vm.repoPendingUnwatch != nil },
+                set: { if !$0 { vm.cancelPendingUnwatch() } }
+            )
+        ) {
+            Button("Unwatch", role: .destructive) { vm.confirmPendingUnwatch() }
+            Button("Cancel", role: .cancel) { vm.cancelPendingUnwatch() }
+        } message: {
+            Text("Stops monitoring it. Restore later in Settings.")
+        }
         .background(Theme.bg)
         .preferredColorScheme(theme.mode.colorScheme)
         .sheet(isPresented: $vm.showSettings) {
@@ -87,11 +114,25 @@ struct DashboardView: View {
                     .font(.system(size: 14))
                     .textFieldStyle(.plain)
                     .foregroundStyle(Theme.textPrimary)
-                    .focused($isSearchFocused)
+                    .focused($focus, equals: .search)
                     // Esc while searching: clear the query and drop focus.
                     .onExitCommand {
                         vm.searchText = ""
-                        isSearchFocused = false
+                        focus = nil
+                    }
+                    // Arrow down/up from the search field jumps into the list,
+                    // selecting the first / last row respectively.
+                    .onKeyPress(.downArrow) {
+                        guard !vm.displayedRepos.isEmpty else { return .ignored }
+                        vm.selectFirstRepo()
+                        focus = .list
+                        return .handled
+                    }
+                    .onKeyPress(.upArrow) {
+                        guard !vm.displayedRepos.isEmpty else { return .ignored }
+                        vm.selectLastRepo()
+                        focus = .list
+                        return .handled
                     }
             }
             .padding(.horizontal, 10)
@@ -178,11 +219,25 @@ struct DashboardView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                RepoTableView(vm: vm)
+                RepoTableView(vm: vm, focus: $focus)
             }
         }
         .cardStyle()
         .frame(maxHeight: .infinity)
+    }
+
+    // MARK: - Row Action Shortcuts (⌘1–⌘6)
+
+    private var rowActionShortcuts: some View {
+        let keys: [KeyEquivalent] = ["1", "2", "3", "4", "5", "6"]
+        return ForEach(Array(keys.enumerated()), id: \.offset) { index, key in
+            Button("") {
+                guard focus == .list, let repo = vm.selectedRepo else { return }
+                vm.performRowAction(index + 1, on: repo)
+            }
+            .keyboardShortcut(key, modifiers: .command)
+            .hidden()
+        }
     }
 
     // MARK: - Bottom Bar

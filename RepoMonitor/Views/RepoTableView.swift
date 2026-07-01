@@ -29,33 +29,68 @@ enum RepoTable {
 
 struct RepoTableView: View {
     @ObservedObject var vm: DashboardViewModel
+    var focus: FocusState<DashboardFocus?>.Binding
 
     var body: some View {
-        ScrollView(.vertical) {
-            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                Section {
-                    ForEach(vm.displayedRepos) { repo in
-                        RepoTableRow(
-                            repo: repo,
-                            isScanning: vm.progress.isScanning,
-                            isPulling: vm.pullingPaths.contains(repo.path),
-                            onScan: { Task { await vm.scanRepo(repo) } },
-                            onPull: { Task { await vm.pullRepo(repo) } },
-                            onOpenTerminal: { vm.openInTerminal(repo) },
-                            onOpenVSCode: { vm.openInVSCode(repo) },
-                            onOpenFinder: { vm.openInFinder(repo) },
-                            onUnwatch: { vm.unwatchRepo(repo) }
-                        )
-                        Rectangle()
-                            .fill(Theme.border)
-                            .frame(height: 0.5)
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    Section {
+                        ForEach(vm.displayedRepos) { repo in
+                            RepoTableRow(
+                                repo: repo,
+                                isScanning: vm.progress.isScanning,
+                                isPulling: vm.pullingPaths.contains(repo.path),
+                                isSelected: vm.selectedRepo?.id == repo.id,
+                                onSelect: {
+                                    vm.selectedRepo = repo
+                                    focus.wrappedValue = .list
+                                },
+                                onScan: { Task { await vm.scanRepo(repo) } },
+                                onPull: { Task { await vm.pullRepo(repo) } },
+                                onOpenTerminal: { vm.openInTerminal(repo) },
+                                onOpenVSCode: { vm.openInVSCode(repo) },
+                                onOpenFinder: { vm.openInFinder(repo) },
+                                onUnwatch: { vm.requestUnwatch(repo) }
+                            )
+                            .id(repo.id)
+                            Rectangle()
+                                .fill(Theme.border)
+                                .frame(height: 0.5)
+                        }
+                    } header: {
+                        RepoTableHeader(vm: vm)
                     }
-                } header: {
-                    RepoTableHeader(vm: vm)
+                }
+            }
+            .background(Theme.bg)
+            // Make the list a focus target so arrow keys reach it. The default
+            // focus ring is suppressed; the selected-row highlight is the cue.
+            .focusable()
+            .focusEffectDisabled()
+            .focused(focus, equals: .list)
+            .onKeyPress(.downArrow) {
+                vm.moveSelection(by: 1)
+                return .handled
+            }
+            .onKeyPress(.upArrow) {
+                // At the top row, hand focus back to the search field.
+                if !vm.moveSelection(by: -1) {
+                    focus.wrappedValue = .search
+                }
+                return .handled
+            }
+            // Keep the selected row visible as it moves under the keyboard.
+            // A nil anchor scrolls the minimum needed to reveal an off-screen
+            // row and does nothing when it's already visible — so clicking a
+            // visible row never causes a jump.
+            .onChange(of: vm.selectedRepo?.id) { _, id in
+                guard let id else { return }
+                withAnimation(.easeInOut(duration: 0.12)) {
+                    proxy.scrollTo(id)
                 }
             }
         }
-        .background(Theme.bg)
     }
 }
 
@@ -133,6 +168,8 @@ private struct RepoTableRow: View {
     let repo: RepoSnapshot
     let isScanning: Bool
     let isPulling: Bool
+    let isSelected: Bool
+    let onSelect: () -> Void
     let onScan: () -> Void
     let onPull: () -> Void
     let onOpenTerminal: () -> Void
@@ -141,6 +178,11 @@ private struct RepoTableRow: View {
     let onUnwatch: () -> Void
 
     @State private var isHovering = false
+
+    private var rowBackground: Color {
+        if isSelected { return Theme.accentSoft }
+        return isHovering ? Theme.bgHover : Color.clear
+    }
 
     private var statusTooltip: String {
         var lines: [String] = ["\(repo.name)  ·  \(repo.path)"]
@@ -229,9 +271,18 @@ private struct RepoTableRow: View {
         }
         .padding(.horizontal, Col.hPad)
         .padding(.vertical, Col.vPad)
-        .background(isHovering ? Theme.bgHover : Color.clear)
+        .background(rowBackground)
+        // A left accent bar marks the selected row without shifting layout.
+        .overlay(alignment: .leading) {
+            Rectangle()
+                .fill(Theme.accent)
+                .frame(width: 3)
+                .opacity(isSelected ? 1 : 0)
+        }
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
+        // Click anywhere on the row (outside the action buttons) to select it.
+        .onTapGesture { onSelect() }
         .contextMenu {
             Button { onScan() } label: {
                 Label("Scan This Repo", systemImage: "arrow.clockwise")

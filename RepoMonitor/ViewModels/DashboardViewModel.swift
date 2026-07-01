@@ -33,6 +33,10 @@ final class DashboardViewModel: ObservableObject {
     @Published var config: MonitorConfig
     @Published var repos: [RepoSnapshot] = []
     @Published var selectedRepo: RepoSnapshot?
+
+    /// Set when an unwatch is requested (button, context menu, or ⌘6); drives a
+    /// confirmation dialog since unwatching is destructive.
+    @Published var repoPendingUnwatch: RepoSnapshot?
     @Published var progress = ScanProgress()
     @Published var lastScanDate: Date?
     @Published var scanDuration: TimeInterval = 0
@@ -87,6 +91,57 @@ final class DashboardViewModel: ObservableObject {
 
     var displayedRepos: [RepoSnapshot] {
         filteredRepos.sorted(by: compareRepos)
+    }
+
+    // MARK: - Keyboard Selection & Navigation
+
+    /// Index of the selected repo within the currently displayed (filtered +
+    /// sorted) list, or nil if nothing is selected or it fell out of view.
+    var selectedIndex: Int? {
+        guard let id = selectedRepo?.id else { return nil }
+        return displayedRepos.firstIndex { $0.id == id }
+    }
+
+    /// Selects the first visible repo (used when arrowing down out of search).
+    func selectFirstRepo() {
+        selectedRepo = displayedRepos.first
+    }
+
+    /// Selects the last visible repo (used when arrowing up out of search).
+    func selectLastRepo() {
+        selectedRepo = displayedRepos.last
+    }
+
+    /// Moves the selection by `delta` rows within the displayed list, clamped to
+    /// the ends. Returns `false` when already at the boundary in that direction
+    /// (so the caller can, e.g., hand focus back to the search field).
+    @discardableResult
+    func moveSelection(by delta: Int) -> Bool {
+        let list = displayedRepos
+        guard !list.isEmpty else { return false }
+        guard let current = selectedIndex else {
+            selectedRepo = delta >= 0 ? list.first : list.last
+            return true
+        }
+        let next = current + delta
+        guard next >= 0, next < list.count else { return false }
+        selectedRepo = list[next]
+        return true
+    }
+
+    /// Runs the action at position `n` (1...6) on `repo`, matching the on-screen
+    /// order of the row's action buttons: 1 Scan · 2 Pull · 3 Finder ·
+    /// 4 VS Code · 5 Terminal · 6 Unwatch.
+    func performRowAction(_ n: Int, on repo: RepoSnapshot) {
+        switch n {
+        case 1: Task { await scanRepo(repo) }
+        case 2: Task { await pullRepo(repo) }
+        case 3: openInFinder(repo)
+        case 4: openInVSCode(repo)
+        case 5: openInTerminal(repo)
+        case 6: requestUnwatch(repo)
+        default: break
+        }
     }
 
     var totalCount: Int { repos.count }
@@ -263,6 +318,22 @@ final class DashboardViewModel: ObservableObject {
         // Restart timer with new interval
         stopPeriodicScan()
         startPeriodicScan()
+    }
+
+    /// Requests unwatching `repo`, surfacing a confirmation dialog first since
+    /// the action is destructive. Confirm via `confirmPendingUnwatch()`.
+    func requestUnwatch(_ repo: RepoSnapshot) {
+        repoPendingUnwatch = repo
+    }
+
+    func confirmPendingUnwatch() {
+        guard let repo = repoPendingUnwatch else { return }
+        repoPendingUnwatch = nil
+        unwatchRepo(repo)
+    }
+
+    func cancelPendingUnwatch() {
+        repoPendingUnwatch = nil
     }
 
     func unwatchRepo(_ repo: RepoSnapshot) {
