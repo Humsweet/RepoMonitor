@@ -19,6 +19,10 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
     var fetchError: String = ""
     var pullError: String = ""
     var pushError: String = ""
+    /// A push that stopped safely and needs the user to act (sensitive file
+    /// staged, Claude unavailable, git identity missing). Distinct from
+    /// `pushError` — rendered as amber "attention", not red "failure".
+    var pushBlock: String = ""
     var isSkipped: Bool = false
     var lastScanned: Date = .now
 
@@ -38,6 +42,7 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         fetchError: String = "",
         pullError: String = "",
         pushError: String = "",
+        pushBlock: String = "",
         isSkipped: Bool = false,
         lastScanned: Date = .now
     ) {
@@ -56,6 +61,7 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         self.fetchError = fetchError
         self.pullError = pullError
         self.pushError = pushError
+        self.pushBlock = pushBlock
         self.isSkipped = isSkipped
         self.lastScanned = lastScanned
     }
@@ -77,6 +83,7 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         fetchError = try container.decodeIfPresent(String.self, forKey: .fetchError) ?? ""
         pullError = try container.decodeIfPresent(String.self, forKey: .pullError) ?? ""
         pushError = try container.decodeIfPresent(String.self, forKey: .pushError) ?? ""
+        pushBlock = try container.decodeIfPresent(String.self, forKey: .pushBlock) ?? ""
         isSkipped = try container.decodeIfPresent(Bool.self, forKey: .isSkipped) ?? false
         lastScanned = try container.decodeIfPresent(Date.self, forKey: .lastScanned) ?? .now
     }
@@ -112,11 +119,13 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         return parts.joined(separator: ", ")
     }
 
-    /// Text shown in the Issues column: push failures first, then pull
-    /// failures, then fetch failures, then the reason the repo is marked dirty.
+    /// Text shown in the Issues column. Real failures (red) first, then the
+    /// amber "push blocked — needs your attention" notice, then fetch failures,
+    /// then the reason the repo is marked dirty.
     var issueText: String {
         if !pushError.isEmpty { return "Push failed: \(pushError)" }
         if !pullError.isEmpty { return "Pull failed: \(pullError)" }
+        if !pushBlock.isEmpty { return pushBlock }
         if !fetchSuccess {
             return fetchError.isEmpty ? "Fetch failed" : "Fetch failed: \(fetchError)"
         }
@@ -124,6 +133,8 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         return ""
     }
     var hasIssue: Bool { !issueText.isEmpty }
+    /// Red "failure" styling. `pushBlock` is deliberately excluded — it's a safe
+    /// stop rendered as amber attention, not an error.
     var issueIsError: Bool { !pushError.isEmpty || !pullError.isEmpty || !fetchSuccess }
     var remoteDisplay: String { remoteUrl.isEmpty ? "—" : remoteUrl }
     var scannedDisplay: String { lastScanned.formatted(.dateTime.month().day().hour().minute()) }

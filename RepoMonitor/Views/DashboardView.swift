@@ -244,33 +244,12 @@ struct DashboardView: View {
 
     private var bottomBar: some View {
         HStack(spacing: 10) {
-            // Left side: scan progress while scanning, last-scan info otherwise.
-            // Both states render inside the same fixed-height bar, so the
-            // layout never shifts when a scan starts or ends.
-            if vm.progress.isScanning {
-                Text("Scanning: \(vm.progress.currentRepo)")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.textSecondary)
-                    .lineLimit(1)
-                ProgressView(value: vm.progress.fraction)
-                    .tint(Theme.accent)
-                    .frame(width: 160)
-                Text("\(vm.progress.current)/\(vm.progress.total)")
-                    .font(.system(size: 14, design: .monospaced))
-                    .foregroundStyle(Theme.textTertiary)
-                Button("Skip Current") {
-                    vm.skipCurrentRepo()
-                }
-                .buttonStyle(.plain)
-                .font(.system(size: 14, weight: .medium))
-                .foregroundStyle(Theme.statusBehind)
-            } else if let date = vm.lastScanDate {
-                Text("Last scan: \(date.formatted(.dateTime.hour().minute().second())) (\(String(format: "%.1fs", vm.scanDuration)))")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.textTertiary)
-            }
+            // Left side narrates the current state inside one fixed-height bar so
+            // the layout never shifts: an active pull/push (with its sub-phase)
+            // wins, then scan progress, then the last-scan summary.
+            bottomStatus
             Spacer()
-            Text("v1.3.0")
+            Text("v1.3.1")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textTertiary)
 
@@ -297,7 +276,61 @@ struct DashboardView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 6))
             }
             .buttonStyle(.plain)
-            .disabled(vm.progress.isScanning)
+            .disabled(vm.isBusy)
         }
+    }
+
+    @ViewBuilder
+    private var bottomStatus: some View {
+        if let active = vm.activeOperation {
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.85)
+                .tint(Theme.accent)
+            Text(operationPhrase(active))
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+        } else if vm.progress.isScanning {
+            Text("Scanning: \(vm.progress.currentRepo)")
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
+            ProgressView(value: vm.progress.fraction)
+                .tint(Theme.accent)
+                .frame(width: 160)
+            Text("\(vm.progress.current)/\(vm.progress.total)")
+                .font(.system(size: 14, design: .monospaced))
+                .foregroundStyle(Theme.textTertiary)
+            Button("Skip Current") {
+                vm.skipCurrentRepo()
+            }
+            .buttonStyle(.plain)
+            .font(.system(size: 14, weight: .medium))
+            .foregroundStyle(Theme.statusBehind)
+        } else if let date = vm.lastScanDate {
+            Text(lastScanText(date))
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.textTertiary)
+        }
+    }
+
+    /// "Pushing RepoMonitor — writing commit message" for a manual op, or
+    /// "Auto-pushing RepoMonitor …" when the op is running inside a scan pass.
+    private func operationPhrase(_ active: (name: String, op: RepoOperation)) -> String {
+        let auto = vm.progress.isScanning
+        let verb = auto ? active.op.verb.lowercased() : active.op.verb
+        var phrase = "\(auto ? "Auto-" : "")\(verb) \(active.name)"
+        if !active.op.detail.isEmpty { phrase += " — \(active.op.detail)" }
+        return phrase
+    }
+
+    private func lastScanText(_ date: Date) -> String {
+        var text = "Last scan: \(date.formatted(.dateTime.hour().minute().second())) (\(String(format: "%.1fs", vm.scanDuration)))"
+        var extras: [String] = []
+        if vm.lastAutoPushed > 0 { extras.append("auto-pushed \(vm.lastAutoPushed)") }
+        if vm.lastAutoPulled > 0 { extras.append("auto-pulled \(vm.lastAutoPulled)") }
+        if !extras.isEmpty { text += " · " + extras.joined(separator: ", ") }
+        return text
     }
 }

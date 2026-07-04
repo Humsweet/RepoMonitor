@@ -18,13 +18,18 @@ struct MenuBarView: View {
 
                 Spacer()
 
-                if vm.progress.isScanning {
+                if vm.isBusy {
                     ProgressView()
                         .controlSize(.small)
                         .scaleEffect(0.7)
                 }
 
-                if let date = vm.lastScanDate {
+                if let active = vm.activeOperation {
+                    Text("\(active.op.verb) \(active.name)")
+                        .font(.system(size: 10))
+                        .foregroundStyle(Theme.textSecondary)
+                        .lineLimit(1)
+                } else if let date = vm.lastScanDate {
                     Text(date, style: .relative)
                         .font(.system(size: 10))
                         .foregroundStyle(Theme.textTertiary)

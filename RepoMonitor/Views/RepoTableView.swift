@@ -40,8 +40,10 @@ struct RepoTableView: View {
                             RepoTableRow(
                                 repo: repo,
                                 isScanning: vm.progress.isScanning,
-                                isPulling: vm.pullingPaths.contains(repo.path),
-                                isPushing: vm.pushingPaths.contains(repo.path),
+                                operation: vm.operation(for: repo),
+                                recentOutcome: vm.recentOutcome(for: repo),
+                                pull: vm.pullEligibility(for: repo),
+                                push: vm.pushEligibility(for: repo),
                                 isSelected: vm.selectedRepo?.id == repo.id,
                                 onSelect: {
                                     vm.selectedRepo = repo
@@ -169,8 +171,10 @@ private struct SortableHeader: View {
 private struct RepoTableRow: View {
     let repo: RepoSnapshot
     let isScanning: Bool
-    let isPulling: Bool
-    let isPushing: Bool
+    let operation: RepoOperation?
+    let recentOutcome: OpOutcome?
+    let pull: (enabled: Bool, tooltip: String)
+    let push: (enabled: Bool, tooltip: String)
     let isSelected: Bool
     let onSelect: () -> Void
     let onScan: () -> Void
@@ -183,6 +187,9 @@ private struct RepoTableRow: View {
 
     @State private var isHovering = false
 
+    private var isPulling: Bool { operation == .pulling }
+    private var isPushing: Bool { operation?.isPush == true }
+
     private var rowBackground: Color {
         if isSelected { return Theme.accentSoft }
         return isHovering ? Theme.bgHover : Color.clear
@@ -192,6 +199,9 @@ private struct RepoTableRow: View {
         var lines: [String] = ["\(repo.name)  ·  \(repo.path)"]
         if !repo.pushError.isEmpty {
             lines.append("⚠ Push failed: \(repo.pushError)")
+        }
+        if !repo.pushBlock.isEmpty {
+            lines.append("• \(repo.pushBlock)")
         }
         if !repo.pullError.isEmpty {
             lines.append("⚠ Pull failed: \(repo.pullError)")
@@ -247,9 +257,14 @@ private struct RepoTableRow: View {
             SyncCell(ahead: repo.ahead, behind: repo.behind)
                 .frame(width: Col.sync, alignment: .leading)
 
-            // Issues — pill badge
+            // Issues — in-progress phase wins, then a fading outcome, then the
+            // usual failure/attention/dirty pill.
             Group {
-                if repo.hasIssue {
+                if let operation {
+                    ProgressPill(text: operation.chip)
+                } else if let recentOutcome {
+                    OutcomePill(outcome: recentOutcome)
+                } else if repo.hasIssue {
                     IssuePill(text: repo.issueText, isError: repo.issueIsError)
                         .help(issueTooltip)
                 } else {
@@ -267,9 +282,9 @@ private struct RepoTableRow: View {
 
             // Actions
             HStack(spacing: 1) {
-                ActionButton(icon: "arrow.clockwise", tooltip: "Scan", isEnabled: !isScanning, action: onScan)
-                ActionButton(icon: "arrow.down.to.line", tooltip: "Pull (ff-only)", isEnabled: !isScanning && !isPulling, action: onPull)
-                ActionButton(icon: "arrow.up.to.line", tooltip: "Commit & Push", isEnabled: !isScanning && !isPushing, action: onPush)
+                ActionButton(icon: "arrow.clockwise", tooltip: "Scan", isEnabled: !isScanning && operation == nil, spinning: operation == .scanning, action: onScan)
+                ActionButton(icon: "arrow.down.to.line", tooltip: pull.tooltip, isEnabled: pull.enabled, spinning: isPulling, action: onPull)
+                ActionButton(icon: "arrow.up.to.line", tooltip: push.tooltip, isEnabled: push.enabled, spinning: isPushing, action: onPush)
                 ActionButton(icon: "folder", tooltip: "Finder", action: onOpenFinder)
                 ActionButton(icon: "chevron.left.forwardslash.chevron.right", tooltip: "VS Code", action: onOpenVSCode)
                 ActionButton(icon: "terminal", tooltip: "Terminal", action: onOpenTerminal)
@@ -295,17 +310,17 @@ private struct RepoTableRow: View {
             Button { onScan() } label: {
                 Label("Scan This Repo", systemImage: "arrow.clockwise")
             }
-            .disabled(isScanning)
+            .disabled(isScanning || operation != nil)
 
             Button { onPull() } label: {
                 Label("Pull This Repo", systemImage: "arrow.down.to.line")
             }
-            .disabled(isScanning || isPulling)
+            .disabled(!pull.enabled)
 
             Button { onPush() } label: {
                 Label("Commit & Push This Repo", systemImage: "arrow.up.to.line")
             }
-            .disabled(isScanning || isPushing)
+            .disabled(!push.enabled)
 
             Divider()
 
@@ -441,6 +456,7 @@ private struct ActionButton: View {
     let tooltip: String
     var isEnabled: Bool = true
     var isDanger: Bool = false
+    var spinning: Bool = false
     let action: () -> Void
 
     @State private var isHovering = false
@@ -452,23 +468,84 @@ private struct ActionButton: View {
     }
 
     private var background: Color {
+        if spinning { return Theme.accentSoft }
         guard isEnabled, isHovering else { return .clear }
         return isDanger ? Theme.statusError.opacity(0.15) : Theme.accentSoft
     }
 
     var body: some View {
         Button(action: action) {
-            Image(systemName: icon)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(foreground)
-                .frame(width: 26, height: 26)
-                .background(background)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-                .contentShape(Rectangle())
+            Group {
+                if spinning {
+                    // A native spinner is an unambiguous "working" cue — distinct
+                    // from a merely disabled (greyed) button.
+                    ProgressView()
+                        .controlSize(.small)
+                        .scaleEffect(0.55)
+                        .tint(Theme.accent)
+                } else {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(foreground)
+                }
+            }
+            .frame(width: 26, height: 26)
+            .background(background)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .onHover { isHovering = $0 }
         .help(tooltip)
+    }
+}
+
+/// Neutral, accent-tinted "operation in progress" pill with a live spinner,
+/// shown in the Issues column so a running pull/push reads as activity — never
+/// as a failure.
+private struct ProgressPill: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 5) {
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.6)
+                .tint(Theme.accent)
+            Text(text)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(Theme.accent)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .background(Theme.accentSoft)
+        .overlay(Capsule().stroke(Theme.accent.opacity(0.3), lineWidth: 0.5))
+        .clipShape(Capsule())
+    }
+}
+
+/// Brief confirmation pill after a manual pull/push: green check for a real
+/// success, neutral for an advisory "nothing to do" outcome.
+private struct OutcomePill: View {
+    let outcome: OpOutcome
+
+    private var tint: Color { outcome.isPositive ? Theme.statusClean : Theme.textSecondary }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: outcome.icon)
+                .font(.system(size: 9, weight: .semibold))
+            Text(outcome.chip)
+                .font(.system(size: 11, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 2)
+        .background(tint.opacity(0.12))
+        .overlay(Capsule().stroke(tint.opacity(0.3), lineWidth: 0.5))
+        .clipShape(Capsule())
     }
 }

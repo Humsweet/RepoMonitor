@@ -7,6 +7,16 @@ final class RepoMonitorService: ObservableObject {
     @Published var lastResult: ScanResult?
     /// Remote repos found during the last full scan that have no local clone.
     @Published var pendingRemoteRepos: [DiscoveredRemoteRepo] = []
+    /// Live per-repo operation state (pull/push sub-phases), keyed by normalized
+    /// path. The single source of truth for in-progress UI; never persisted.
+    @Published var operations: [String: RepoOperation] = [:]
+    /// Counts from the most recent scan's auto passes, for the bottom-bar summary.
+    @Published var lastAutoPushed = 0
+    @Published var lastAutoPulled = 0
+
+    /// True while anything is running (a scan, or any pull/push). Gates new
+    /// operations so a manual pull/push and a scan can't overlap and conflict.
+    var isBusy: Bool { progress.isScanning || !operations.isEmpty }
 
     private var gitCli: GitCLI
     private let commitMessageGenerator = CommitMessageGenerator()
@@ -71,58 +81,102 @@ final class RepoMonitorService: ObservableObject {
         return await runScan(targetPaths: [normalizedPath])
     }
 
-    // MARK: - Pull
-
+    // MARK: - Pull & Push
+    //
     // Pull and Push share the same choke-point pattern (performPull / performPush)
-    // so manual and automatic paths behave identically.
+    // so manual and automatic paths behave identically. Each choke point reports
+    // its live sub-phase via `operations[path]`, so the row and bottom bar show
+    // real progress instead of a frozen row.
 
-    /// Manual pull: attempts `git pull --ff-only`, records any failure on the
-    /// snapshot's pullError, then rescans the repo to refresh its counts.
-    func pullRepo(at path: String) async -> ScanResult {
+    /// Typed pull/push results so callers can style the outcome precisely:
+    /// green success, neutral advisory, amber "needs attention", or red failure.
+    enum PullResult { case pulled, upToDate, failed(String) }
+    enum PushResult { case pushed, nothingToPush, behind(Int), blocked(String), failed(String) }
+
+    private func setOperation(_ op: RepoOperation?, for path: String) {
+        operations[path] = op
+    }
+
+    /// Clears stale pull/push feedback the instant a new attempt starts, so an
+    /// old red error never masquerades as a fresh failure while work is running.
+    private func clearOpFeedback(at path: String) {
+        guard var s = repos.first(where: { normalizePath($0.path) == path }) else { return }
+        s.pullError = ""; s.pushError = ""; s.pushBlock = ""
+        upsertRepo(s)
+    }
+
+    /// Sends one informational summary notification after an auto pass acted, so
+    /// the user learns their repos were synced even with the window closed.
+    private func notifyAutoSummary(pulled: Int, pushed: Int) {
+        guard config.notifications.enabled else { return }
+        var parts: [String] = []
+        if pushed > 0 { parts.append("pushed \(pushed) repo\(pushed > 1 ? "s" : "")") }
+        if pulled > 0 { parts.append("pulled \(pulled) repo\(pulled > 1 ? "s" : "")") }
+        guard !parts.isEmpty else { return }
+        NotificationService.shared.send(MonitorNotification(
+            repoName: "Auto sync",
+            message: "Auto-\(parts.joined(separator: ", "))",
+            level: .info
+        ))
+    }
+
+    // MARK: Pull
+
+    /// Manual pull: fast-forwards the repo, records the result, then rescans to
+    /// refresh counts. Returns an outcome the caller surfaces as a fading chip.
+    @discardableResult
+    func pullRepo(at path: String) async -> OpOutcome? {
         let normalizedPath = normalizePath(path)
-        guard !progress.isScanning, isRepoAvailable(at: normalizedPath) else {
-            return makeResult(notifications: [], scannedAt: Date(), duration: 0)
-        }
+        guard !isBusy, isRepoAvailable(at: normalizedPath) else { return nil }
 
-        let pullError = await performPull(at: normalizedPath)
+        clearOpFeedback(at: normalizedPath)
+        setOperation(.pulling, for: normalizedPath)
+        let result = await performPull(at: normalizedPath)
+        setOperation(nil, for: normalizedPath)
+
+        var outcome: OpOutcome?
         if var snapshot = repos.first(where: { normalizePath($0.path) == normalizedPath }) {
-            snapshot.pullError = pullError
+            switch result {
+            case .pulled: snapshot.pullError = ""; outcome = .pulled
+            case .upToDate: snapshot.pullError = ""; outcome = .upToDate
+            case .failed(let msg): snapshot.pullError = msg
+            }
             upsertRepo(snapshot)
         }
 
-        return await runScan(targetPaths: [normalizedPath])
+        _ = await runScan(targetPaths: [normalizedPath])
+        return outcome
     }
 
-    /// Runs `git pull --ff-only` and returns a decorated error ("" on success).
-    /// When the pulled repo is RepoMonitor's own source and the pull advanced it
-    /// with build-affecting changes, hands off to `SelfUpdateService` to rebuild
-    /// and relaunch. This is the single choke point for both manual and auto pull.
-    private func performPull(at path: String) async -> String {
+    /// Runs `git pull --ff-only`. When the pulled repo is RepoMonitor's own
+    /// source and the pull advanced it with build-affecting changes, hands off to
+    /// `SelfUpdateService` to rebuild and relaunch. The single choke point for
+    /// both manual and auto pull.
+    private func performPull(at path: String) async -> PullResult {
         let rawRemoteUrl = await gitCli.originRemoteUrl(in: path)
-
         let selfUpdateCandidate = config.git.selfUpdateEnabled && SelfUpdateService.isSelfRepo(path)
-        let preSHA = selfUpdateCandidate ? await gitCli.headSHA(in: path) : ""
+        let preSHA = await gitCli.headSHA(in: path)
 
         let result = await gitCli.pull(
             in: path,
             remoteURL: rawRemoteUrl,
             credential: credential(forRemoteURL: rawRemoteUrl)
         )
-        guard result.success else { return decoratePullError(result.error) }
+        guard result.success else { return .failed(decoratePullError(result.error)) }
 
-        if selfUpdateCandidate, !preSHA.isEmpty {
-            let postSHA = await gitCli.headSHA(in: path)
-            if !postSHA.isEmpty, postSHA != preSHA {
-                let changed = await gitCli.changedFiles(in: path, from: preSHA)
-                SelfUpdateService.shared.handlePostPull(repoPath: path, changedFiles: changed)
-            }
+        let postSHA = await gitCli.headSHA(in: path)
+        let advanced = !preSHA.isEmpty && !postSHA.isEmpty && preSHA != postSHA
+        if selfUpdateCandidate, advanced {
+            let changed = await gitCli.changedFiles(in: path, from: preSHA)
+            SelfUpdateService.shared.handlePostPull(repoPath: path, changedFiles: changed)
         }
-        return ""
+        return advanced ? .pulled : .upToDate
     }
 
-    /// Auto pull pass: pulls every repo that is behind, has no local commits,
-    /// and has a clean working tree. Only called when autoPullEnabled is on.
-    private func autoPullPass(targetPaths: [String]) async {
+    /// Auto pull pass: pulls every repo that is behind, has no local commits, and
+    /// has a clean working tree. Returns how many actually advanced.
+    private func autoPullPass(targetPaths: [String]) async -> Int {
+        var pulled = 0
         for repoPath in targetPaths {
             guard var snapshot = repos.first(where: { normalizePath($0.path) == repoPath }) else { continue }
             guard snapshot.behind > 0,
@@ -133,16 +187,24 @@ final class RepoMonitorService: ObservableObject {
 
             progress.currentRepo = snapshot.name
             progress.currentRepoPath = repoPath
+            setOperation(.pulling, for: repoPath)
+            let result = await performPull(at: repoPath)
+            setOperation(nil, for: repoPath)
 
-            snapshot.pullError = await performPull(at: repoPath)
-            if snapshot.pullError.isEmpty {
+            switch result {
+            case .pulled, .upToDate:
+                snapshot.pullError = ""
+                if case .pulled = result { pulled += 1 }
                 let counts = await gitCli.aheadBehind(in: repoPath)
                 snapshot.ahead = counts.ahead
                 snapshot.behind = counts.behind
                 snapshot.lastScanned = Date()
+            case .failed(let msg):
+                snapshot.pullError = msg
             }
             upsertRepo(snapshot)
         }
+        return pulled
     }
 
     private func decoratePullError(_ error: String) -> String {
@@ -158,96 +220,114 @@ final class RepoMonitorService: ObservableObject {
         return error.isEmpty ? "git pull failed" : error
     }
 
-    // MARK: - Push
+    // MARK: Push
 
     /// Manual push: commits any uncommitted changes (with an AI-generated
-    /// message) and pushes, records any failure on the snapshot's pushError,
-    /// then rescans the repo to refresh its counts.
-    func pushRepo(at path: String) async -> ScanResult {
+    /// message) and pushes, records the outcome, then rescans. Returns an outcome
+    /// the caller surfaces as a fading chip.
+    @discardableResult
+    func pushRepo(at path: String) async -> OpOutcome? {
         let normalizedPath = normalizePath(path)
-        guard !progress.isScanning, isRepoAvailable(at: normalizedPath) else {
-            return makeResult(notifications: [], scannedAt: Date(), duration: 0)
-        }
+        guard !isBusy, isRepoAvailable(at: normalizedPath) else { return nil }
 
-        let pushError = await performPush(at: normalizedPath)
+        clearOpFeedback(at: normalizedPath)
+        let result = await performPush(at: normalizedPath)
+        setOperation(nil, for: normalizedPath)
+
+        var outcome: OpOutcome?
         if var snapshot = repos.first(where: { normalizePath($0.path) == normalizedPath }) {
-            snapshot.pushError = pushError
+            applyPushResult(result, to: &snapshot, outcome: &outcome)
             upsertRepo(snapshot)
         }
 
-        return await runScan(targetPaths: [normalizedPath])
+        _ = await runScan(targetPaths: [normalizedPath])
+        return outcome
     }
 
-    /// Commits + pushes a single repo. The single choke point for both manual
-    /// and auto push. Returns a decorated error ("" on success or no-op).
+    /// Maps a `PushResult` onto the snapshot: green success clears everything,
+    /// amber "blocked" fills `pushBlock`, red "failed" fills `pushError`.
+    private func applyPushResult(_ result: PushResult, to snapshot: inout RepoSnapshot, outcome: inout OpOutcome?) {
+        switch result {
+        case .pushed:        snapshot.pushError = ""; snapshot.pushBlock = ""; outcome = .pushed
+        case .nothingToPush: snapshot.pushError = ""; snapshot.pushBlock = ""; outcome = .nothingToPush
+        case .behind:        snapshot.pushError = ""; snapshot.pushBlock = ""; outcome = .behindPullFirst
+        case .blocked(let msg): snapshot.pushError = ""; snapshot.pushBlock = msg
+        case .failed(let msg):  snapshot.pushError = msg; snapshot.pushBlock = ""
+        }
+    }
+
+    /// Commits + pushes a single repo, reporting each sub-phase via `operations`.
+    /// The single choke point for both manual and auto push.
     ///
     /// Flow: recompute live state → refuse if behind remote → if dirty, stage
     /// everything, run the sensitive-content guard, generate a message and
     /// commit → push. Any abort before the push unstages so the working tree is
     /// left exactly as found.
-    private func performPush(at path: String) async -> String {
+    private func performPush(at path: String) async -> PushResult {
+        setOperation(.pushChecking, for: path)
         let dirty = await gitCli.dirtyStatus(in: path)
         let counts = await gitCli.aheadBehind(in: path)
 
         // A non-fast-forward push would be rejected; make the user pull first.
-        if counts.behind > 0 {
-            return "Behind remote by \(counts.behind) commit\(counts.behind > 1 ? "s" : ""). Pull first."
-        }
+        if counts.behind > 0 { return .behind(counts.behind) }
 
         // Nothing to commit and nothing unpushed — treat as a clean no-op.
-        if !dirty.isDirty && counts.ahead == 0 {
-            return ""
-        }
+        if !dirty.isDirty && counts.ahead == 0 { return .nothingToPush }
 
         if dirty.isDirty {
+            setOperation(.pushStaging, for: path)
             let staged = await gitCli.stageAll(in: path)
             guard staged.success else {
                 await gitCli.unstageAll(in: path)
-                return staged.error.isEmpty ? "git add failed" : staged.error
+                return .failed(staged.error.isEmpty ? "git add failed" : staged.error)
             }
 
+            setOperation(.pushChecking, for: path)
             let stagedFiles = await gitCli.stagedFiles(in: path)
             let stagedDiff = await gitCli.stagedDiff(in: path)
 
             if let reason = SensitiveChangeScanner.blockReason(stagedFiles: stagedFiles, stagedDiff: stagedDiff) {
                 await gitCli.unstageAll(in: path)
-                return "Blocked: \(reason). Resolve manually."
+                return .blocked("Push blocked: \(reason). Resolve manually.")
             }
 
+            setOperation(.pushGenerating, for: path)
             let message: String
             do {
                 let repoName = URL(fileURLWithPath: path).lastPathComponent
                 message = try await commitMessageGenerator.generate(diff: stagedDiff, repoName: repoName)
             } catch CommitMessageGenerator.GenerationError.cliNotFound {
                 await gitCli.unstageAll(in: path)
-                return "Claude CLI not found — cannot generate commit message."
+                return .blocked("Claude CLI not found — cannot generate commit message.")
             } catch {
                 await gitCli.unstageAll(in: path)
-                return "Could not generate commit message (Claude CLI unavailable or offline)."
+                return .blocked("Could not generate commit message (Claude unavailable or offline).")
             }
 
+            setOperation(.pushCommitting, for: path)
             let committed = await gitCli.commit(message: message, in: path)
             guard committed.success else {
                 await gitCli.unstageAll(in: path)
-                return decoratePushError(committed.error, phase: "commit")
+                return .failed(decoratePushError(committed.error, phase: "commit"))
             }
         }
 
+        setOperation(.pushPushing, for: path)
         let rawRemoteUrl = await gitCli.originRemoteUrl(in: path)
         let result = await gitCli.push(
             in: path,
             remoteURL: rawRemoteUrl,
             credential: credential(forRemoteURL: rawRemoteUrl)
         )
-        guard result.success else { return decoratePushError(result.error, phase: "push") }
-        return ""
+        guard result.success else { return .failed(decoratePushError(result.error, phase: "push")) }
+        return .pushed
     }
 
     /// Auto push pass: commits + pushes every repo that is dirty or has unpushed
-    /// commits, is not behind remote, fetched cleanly, and wasn't skipped. Only
-    /// called when autoPushEnabled is on, and after any auto-pull has run so
-    /// freshly-pulled repos are no longer behind.
-    private func autoPushPass(targetPaths: [String]) async {
+    /// commits, is not behind remote, fetched cleanly, and wasn't skipped. Runs
+    /// after any auto-pull. Returns how many were actually pushed.
+    private func autoPushPass(targetPaths: [String]) async -> Int {
+        var pushed = 0
         for repoPath in targetPaths {
             guard var snapshot = repos.first(where: { normalizePath($0.path) == repoPath }) else { continue }
             guard snapshot.isDirty || snapshot.ahead > 0,
@@ -257,9 +337,13 @@ final class RepoMonitorService: ObservableObject {
 
             progress.currentRepo = snapshot.name
             progress.currentRepoPath = repoPath
+            let result = await performPush(at: repoPath)
+            setOperation(nil, for: repoPath)
 
-            snapshot.pushError = await performPush(at: repoPath)
-            if snapshot.pushError.isEmpty {
+            var outcome: OpOutcome?
+            applyPushResult(result, to: &snapshot, outcome: &outcome)
+            if case .pushed = result {
+                pushed += 1
                 let dirty = await gitCli.dirtyStatus(in: repoPath)
                 snapshot.isDirty = dirty.isDirty
                 snapshot.modifiedCount = dirty.modified
@@ -272,6 +356,7 @@ final class RepoMonitorService: ObservableObject {
             }
             upsertRepo(snapshot)
         }
+        return pushed
     }
 
     /// Shared decoration for commit/push stderr into a concise, actionable line.
@@ -340,12 +425,12 @@ final class RepoMonitorService: ObservableObject {
             }
         }
 
-        if config.git.autoPullEnabled {
-            await autoPullPass(targetPaths: uniqueTargets)
-        }
-
-        if config.git.autoPushEnabled {
-            await autoPushPass(targetPaths: uniqueTargets)
+        let autoPulled = config.git.autoPullEnabled ? await autoPullPass(targetPaths: uniqueTargets) : 0
+        let autoPushed = config.git.autoPushEnabled ? await autoPushPass(targetPaths: uniqueTargets) : 0
+        lastAutoPulled = autoPulled
+        lastAutoPushed = autoPushed
+        if autoPulled > 0 || autoPushed > 0 {
+            notifyAutoSummary(pulled: autoPulled, pushed: autoPushed)
         }
 
         repos = sortRepos(repos)
@@ -469,8 +554,9 @@ final class RepoMonitorService: ObservableObject {
             snapshot.pullError = ""
         }
         if !snapshot.isDirty && snapshot.ahead == 0 {
-            // Nothing left to commit or push — any prior push error is stale.
+            // Nothing left to commit or push — any prior push feedback is stale.
             snapshot.pushError = ""
+            snapshot.pushBlock = ""
         }
         snapshot.lastScanned = Date()
         return snapshot

@@ -44,8 +44,27 @@ final class DashboardViewModel: ObservableObject {
     @Published var searchText = ""
     @Published var sortColumn: RepoSortColumn = .group
     @Published var sortAscending = true
+    // Re-entrancy guards (set synchronously the instant a manual op starts, so a
+    // double-tap can't launch two). Display state comes from `operations`.
     @Published var pullingPaths: Set<String> = []
     @Published var pushingPaths: Set<String> = []
+
+    /// Live per-repo operation phase, mirrored from the service. Drives the
+    /// in-progress spinner + status chip on each row and in the bottom bar.
+    @Published var operations: [String: RepoOperation] = [:]
+
+    /// Recently-finished manual pull/push outcomes, shown as a brief fading chip
+    /// so success/no-op is confirmed instead of the row silently changing.
+    @Published var recentOutcomes: [String: OutcomeEntry] = [:]
+
+    /// Counts from the last scan's auto passes, mirrored for the bottom-bar summary.
+    @Published var lastAutoPushed = 0
+    @Published var lastAutoPulled = 0
+
+    struct OutcomeEntry: Equatable {
+        let outcome: OpOutcome
+        let token: UUID
+    }
 
     /// Network reachability, mirrored from `NetworkMonitor`. Drives the offline
     /// indicator and gates the periodic scan loop.
@@ -186,6 +205,11 @@ final class DashboardViewModel: ObservableObject {
         service.$progress
             .assign(to: &$progress)
 
+        // Mirror live operation phases and auto-pass counts for the UI.
+        service.$operations.assign(to: &$operations)
+        service.$lastAutoPushed.assign(to: &$lastAutoPushed)
+        service.$lastAutoPulled.assign(to: &$lastAutoPulled)
+
         service.$repos
             .sink { [weak self] repos in
                 guard let self else { return }
@@ -293,26 +317,89 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func scan() async {
+        guard !isBusy else { return }
         _ = await service.scan()
     }
 
     func scanRepo(_ repo: RepoSnapshot) async {
-        guard !progress.isScanning else { return }
+        guard !isBusy else { return }
         _ = await service.scanRepo(at: repo.path)
     }
 
     func pullRepo(_ repo: RepoSnapshot) async {
-        guard !progress.isScanning, !pullingPaths.contains(repo.path) else { return }
+        guard !isBusy, !pullingPaths.contains(repo.path) else { return }
         pullingPaths.insert(repo.path)
         defer { pullingPaths.remove(repo.path) }
-        _ = await service.pullRepo(at: repo.path)
+        if let outcome = await service.pullRepo(at: repo.path) {
+            showOutcome(outcome, at: repo.path)
+        }
     }
 
     func pushRepo(_ repo: RepoSnapshot) async {
-        guard !progress.isScanning, !pushingPaths.contains(repo.path) else { return }
+        guard !isBusy, !pushingPaths.contains(repo.path) else { return }
         pushingPaths.insert(repo.path)
         defer { pushingPaths.remove(repo.path) }
-        _ = await service.pushRepo(at: repo.path)
+        if let outcome = await service.pushRepo(at: repo.path) {
+            showOutcome(outcome, at: repo.path)
+        }
+    }
+
+    // MARK: - Activity & Outcome UI state
+
+    /// True while anything is running (scan or any pull/push). Gates new actions.
+    var isBusy: Bool { progress.isScanning || !operations.isEmpty }
+
+    /// The operation to show for a row: an explicit pull/push phase, or a
+    /// scanning cue for the repo the scan is currently visiting.
+    func operation(for repo: RepoSnapshot) -> RepoOperation? {
+        if let op = operations[repo.path] { return op }
+        if progress.isScanning, progress.currentRepoPath == repo.path { return .scanning }
+        return nil
+    }
+
+    /// The most relevant active operation to narrate in the bottom bar, with its
+    /// repo name — nil when nothing is pulling/pushing.
+    var activeOperation: (name: String, op: RepoOperation)? {
+        // Prefer the repo the scan currently names (auto passes set it); else any.
+        if let op = operations[progress.currentRepoPath] {
+            return (URL(fileURLWithPath: progress.currentRepoPath).lastPathComponent, op)
+        }
+        if let (path, op) = operations.first {
+            return (URL(fileURLWithPath: path).lastPathComponent, op)
+        }
+        return nil
+    }
+
+    func recentOutcome(for repo: RepoSnapshot) -> OpOutcome? {
+        recentOutcomes[repo.path]?.outcome
+    }
+
+    private func showOutcome(_ outcome: OpOutcome, at path: String) {
+        let token = UUID()
+        recentOutcomes[path] = OutcomeEntry(outcome: outcome, token: token)
+        Task { [weak self] in
+            try? await Task.sleep(for: .seconds(outcome.lingerSeconds))
+            guard let self, self.recentOutcomes[path]?.token == token else { return }
+            self.recentOutcomes[path] = nil
+        }
+    }
+
+    /// Whether the Pull button is actionable, plus the tooltip that explains why.
+    func pullEligibility(for repo: RepoSnapshot) -> (enabled: Bool, tooltip: String) {
+        if operation(for: repo) == .pulling { return (false, "Pulling…") }
+        if isBusy { return (false, "Busy — another operation is running") }
+        if repo.behind == 0 { return (false, "Up to date — nothing to pull") }
+        return (true, "Pull \(repo.behind) commit\(repo.behind > 1 ? "s" : "") (ff-only)")
+    }
+
+    /// Whether the Push button is actionable, plus the tooltip that explains why.
+    func pushEligibility(for repo: RepoSnapshot) -> (enabled: Bool, tooltip: String) {
+        if operation(for: repo)?.isPush == true { return (false, "Pushing…") }
+        if isBusy { return (false, "Busy — another operation is running") }
+        if repo.behind > 0 { return (false, "Pull first — \(repo.behind) behind remote") }
+        if !repo.isDirty && repo.ahead == 0 { return (false, "Nothing to commit or push") }
+        if repo.isDirty { return (true, "Commit & push changes") }
+        return (true, "Push \(repo.ahead) unpushed commit\(repo.ahead > 1 ? "s" : "")")
     }
 
     func skipCurrentRepo() {
