@@ -327,7 +327,8 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func pullRepo(_ repo: RepoSnapshot) async {
-        guard !isBusy, !pullingPaths.contains(repo.path) else { return }
+        // Per-repo gate — a manual pull is allowed while a scan runs on others.
+        guard operations[repo.path] == nil, !pullingPaths.contains(repo.path) else { return }
         pullingPaths.insert(repo.path)
         defer { pullingPaths.remove(repo.path) }
         if let outcome = await service.pullRepo(at: repo.path) {
@@ -336,7 +337,8 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func pushRepo(_ repo: RepoSnapshot) async {
-        guard !isBusy, !pushingPaths.contains(repo.path) else { return }
+        // Per-repo gate — a manual push is allowed while a scan runs on others.
+        guard operations[repo.path] == nil, !pushingPaths.contains(repo.path) else { return }
         pushingPaths.insert(repo.path)
         defer { pushingPaths.remove(repo.path) }
         if let outcome = await service.pushRepo(at: repo.path) {
@@ -349,22 +351,17 @@ final class DashboardViewModel: ObservableObject {
     /// True while anything is running (scan or any pull/push). Gates new actions.
     var isBusy: Bool { progress.isScanning || !operations.isEmpty }
 
-    /// The operation to show for a row: an explicit pull/push phase, or a
-    /// scanning cue for the repo the scan is currently visiting.
-    func operation(for repo: RepoSnapshot) -> RepoOperation? {
-        if let op = operations[repo.path] { return op }
-        if progress.isScanning, progress.currentRepoPath == repo.path { return .scanning }
-        return nil
-    }
+    /// The operation to show for a row (scanning / pulling / pushing phase).
+    func operation(for repo: RepoSnapshot) -> RepoOperation? { operations[repo.path] }
 
-    /// The most relevant active operation to narrate in the bottom bar, with its
-    /// repo name — nil when nothing is pulling/pushing.
+    /// The most relevant *pull/push* operation to narrate in the bottom bar's
+    /// indeterminate line, with its repo name. Excludes `.scanning`, which the
+    /// determinate progress bar already covers.
     var activeOperation: (name: String, op: RepoOperation)? {
-        // Prefer the repo the scan currently names (auto passes set it); else any.
-        if let op = operations[progress.currentRepoPath] {
+        if let op = operations[progress.currentRepoPath], op != .scanning {
             return (URL(fileURLWithPath: progress.currentRepoPath).lastPathComponent, op)
         }
-        if let (path, op) = operations.first {
+        if let (path, op) = operations.first(where: { $0.value != .scanning }) {
             return (URL(fileURLWithPath: path).lastPathComponent, op)
         }
         return nil
@@ -385,17 +382,21 @@ final class DashboardViewModel: ObservableObject {
     }
 
     /// Whether the Pull button is actionable, plus the tooltip that explains why.
+    /// Gated per-repo — a repo stays actionable while a scan runs on others.
     func pullEligibility(for repo: RepoSnapshot) -> (enabled: Bool, tooltip: String) {
-        if operation(for: repo) == .pulling { return (false, "Pulling…") }
-        if isBusy { return (false, "Busy — another operation is running") }
+        if let op = operation(for: repo) {
+            return (false, op == .scanning ? "Scanning…" : "Pulling…")
+        }
         if repo.behind == 0 { return (false, "Up to date — nothing to pull") }
         return (true, "Pull \(repo.behind) commit\(repo.behind > 1 ? "s" : "") (ff-only)")
     }
 
     /// Whether the Push button is actionable, plus the tooltip that explains why.
+    /// Gated per-repo — you can push a needy repo while the scan continues.
     func pushEligibility(for repo: RepoSnapshot) -> (enabled: Bool, tooltip: String) {
-        if operation(for: repo)?.isPush == true { return (false, "Pushing…") }
-        if isBusy { return (false, "Busy — another operation is running") }
+        if let op = operation(for: repo) {
+            return (false, op == .scanning ? "Scanning…" : "Pushing…")
+        }
         if repo.behind > 0 { return (false, "Pull first — \(repo.behind) behind remote") }
         if !repo.isDirty && repo.ahead == 0 { return (false, "Nothing to commit or push") }
         if repo.isDirty { return (true, "Commit & push changes") }

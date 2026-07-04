@@ -203,6 +203,24 @@ actor GitCLI {
         return result.output
     }
 
+    /// Reads a single git config value ("" if unset). Used by the pre-push
+    /// safety gates to inspect the commit identity.
+    func configValue(_ key: String, in directory: String) async -> String {
+        guard let result = try? await run(["config", "--get", key], in: directory),
+              result.success else { return "" }
+        return result.output
+    }
+
+    /// True when an http(s) remote URL embeds a username/password (e.g.
+    /// `https://user:token@host/…`) — a credential that should be moved out of
+    /// `.git/config` before pushing. SSH `git@host:…` forms are not flagged.
+    static func embeddedCredential(in remoteURL: String) -> Bool {
+        guard let url = URL(string: remoteURL),
+              let scheme = url.scheme?.lowercased(),
+              scheme == "http" || scheme == "https" else { return false }
+        return url.user != nil || url.password != nil
+    }
+
     func currentBranch(in directory: String) async -> String {
         guard let result = try? await run(["rev-parse", "--abbrev-ref", "HEAD"], in: directory),
               result.success else { return "" }

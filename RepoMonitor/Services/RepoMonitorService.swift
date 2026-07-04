@@ -105,6 +105,25 @@ final class RepoMonitorService: ObservableObject {
         upsertRepo(s)
     }
 
+    /// Re-reads a single repo's dirty + ahead/behind counts (no network fetch)
+    /// and updates its snapshot. Lets a manual pull/push refresh its own row
+    /// without a full scan, so it stays responsive even while a scan runs on
+    /// other repos.
+    private func refreshRepoState(at path: String) async {
+        guard var s = repos.first(where: { normalizePath($0.path) == path }) else { return }
+        let dirty = await gitCli.dirtyStatus(in: path)
+        s.isDirty = dirty.isDirty
+        s.modifiedCount = dirty.modified
+        s.untrackedCount = dirty.untracked
+        s.dirtyFiles = dirty.sampleFiles
+        let counts = await gitCli.aheadBehind(in: path)
+        s.ahead = counts.ahead
+        s.behind = counts.behind
+        s.lastScanned = Date()
+        if !s.isDirty && s.ahead == 0 { s.pushError = ""; s.pushBlock = "" }
+        upsertRepo(s)
+    }
+
     /// Sends one informational summary notification after an auto pass acted, so
     /// the user learns their repos were synced even with the window closed.
     private func notifyAutoSummary(pulled: Int, pushed: Int) {
@@ -127,12 +146,13 @@ final class RepoMonitorService: ObservableObject {
     @discardableResult
     func pullRepo(at path: String) async -> OpOutcome? {
         let normalizedPath = normalizePath(path)
-        guard !isBusy, isRepoAvailable(at: normalizedPath) else { return nil }
+        // Per-repo gate: allowed even while a full scan runs on OTHER repos — only
+        // blocked if this repo is itself being scanned / pulled / pushed.
+        guard operations[normalizedPath] == nil, isRepoAvailable(at: normalizedPath) else { return nil }
 
         clearOpFeedback(at: normalizedPath)
         setOperation(.pulling, for: normalizedPath)
         let result = await performPull(at: normalizedPath)
-        setOperation(nil, for: normalizedPath)
 
         var outcome: OpOutcome?
         if var snapshot = repos.first(where: { normalizePath($0.path) == normalizedPath }) {
@@ -144,7 +164,9 @@ final class RepoMonitorService: ObservableObject {
             upsertRepo(snapshot)
         }
 
-        _ = await runScan(targetPaths: [normalizedPath])
+        await refreshRepoState(at: normalizedPath)
+        setOperation(nil, for: normalizedPath)
+        persistCurrentState(lastScanDate: previousState.lastScanDate, lastNotificationDate: previousState.lastNotificationDate)
         return outcome
     }
 
@@ -173,38 +195,29 @@ final class RepoMonitorService: ObservableObject {
         return advanced ? .pulled : .upToDate
     }
 
-    /// Auto pull pass: pulls every repo that is behind, has no local commits, and
-    /// has a clean working tree. Returns how many actually advanced.
-    private func autoPullPass(targetPaths: [String]) async -> Int {
-        var pulled = 0
-        for repoPath in targetPaths {
-            guard var snapshot = repos.first(where: { normalizePath($0.path) == repoPath }) else { continue }
-            guard snapshot.behind > 0,
-                  snapshot.ahead == 0,
-                  !snapshot.isDirty,
-                  snapshot.fetchSuccess,
-                  !snapshot.isSkipped else { continue }
+    /// Whether a freshly-scanned snapshot qualifies for auto-pull: behind remote,
+    /// no local commits, clean tree, fetched cleanly, not skipped.
+    private func isAutoPullEligible(_ s: RepoSnapshot) -> Bool {
+        s.behind > 0 && s.ahead == 0 && !s.isDirty && s.fetchSuccess && !s.isSkipped
+    }
 
-            progress.currentRepo = snapshot.name
-            progress.currentRepoPath = repoPath
-            setOperation(.pulling, for: repoPath)
-            let result = await performPull(at: repoPath)
-            setOperation(nil, for: repoPath)
-
-            switch result {
-            case .pulled, .upToDate:
-                snapshot.pullError = ""
-                if case .pulled = result { pulled += 1 }
-                let counts = await gitCli.aheadBehind(in: repoPath)
-                snapshot.ahead = counts.ahead
-                snapshot.behind = counts.behind
-                snapshot.lastScanned = Date()
-            case .failed(let msg):
-                snapshot.pullError = msg
+    /// Auto-pulls one repo inline during the scan (already marked with a
+    /// `.pulling` operation by the caller). Returns true if it actually advanced.
+    private func autoPull(at repoPath: String) async -> Bool {
+        let result = await performPull(at: repoPath)
+        switch result {
+        case .pulled:
+            await refreshRepoState(at: repoPath)
+            return true
+        case .upToDate:
+            await refreshRepoState(at: repoPath)
+        case .failed(let msg):
+            if var s = repos.first(where: { normalizePath($0.path) == repoPath }) {
+                s.pullError = msg
+                upsertRepo(s)
             }
-            upsertRepo(snapshot)
         }
-        return pulled
+        return false
     }
 
     private func decoratePullError(_ error: String) -> String {
@@ -228,11 +241,12 @@ final class RepoMonitorService: ObservableObject {
     @discardableResult
     func pushRepo(at path: String) async -> OpOutcome? {
         let normalizedPath = normalizePath(path)
-        guard !isBusy, isRepoAvailable(at: normalizedPath) else { return nil }
+        // Per-repo gate: a manual push works even mid-scan (on other repos) — only
+        // blocked if this repo is itself being scanned / pulled / pushed.
+        guard operations[normalizedPath] == nil, isRepoAvailable(at: normalizedPath) else { return nil }
 
         clearOpFeedback(at: normalizedPath)
         let result = await performPush(at: normalizedPath)
-        setOperation(nil, for: normalizedPath)
 
         var outcome: OpOutcome?
         if var snapshot = repos.first(where: { normalizePath($0.path) == normalizedPath }) {
@@ -240,7 +254,9 @@ final class RepoMonitorService: ObservableObject {
             upsertRepo(snapshot)
         }
 
-        _ = await runScan(targetPaths: [normalizedPath])
+        await refreshRepoState(at: normalizedPath)
+        setOperation(nil, for: normalizedPath)
+        persistCurrentState(lastScanDate: previousState.lastScanDate, lastNotificationDate: previousState.lastNotificationDate)
         return outcome
     }
 
@@ -273,6 +289,16 @@ final class RepoMonitorService: ObservableObject {
 
         // Nothing to commit and nothing unpushed — treat as a clean no-op.
         if !dirty.isDirty && counts.ahead == 0 { return .nothingToPush }
+
+        // Pre-push safety gates (git-push-check). Any hit blocks the push.
+        let rawRemoteUrl = await gitCli.originRemoteUrl(in: path)
+        if GitCLI.embeddedCredential(in: rawRemoteUrl) {
+            return .blocked("Push blocked: remote URL embeds a credential. Run `git remote set-url` to remove it before pushing.")
+        }
+        // The commit identity only matters when we're about to create a commit.
+        if dirty.isDirty, let issue = await identityBlock(at: path) {
+            return .blocked(issue)
+        }
 
         if dirty.isDirty {
             setOperation(.pushStaging, for: path)
@@ -313,7 +339,6 @@ final class RepoMonitorService: ObservableObject {
         }
 
         setOperation(.pushPushing, for: path)
-        let rawRemoteUrl = await gitCli.originRemoteUrl(in: path)
         let result = await gitCli.push(
             in: path,
             remoteURL: rawRemoteUrl,
@@ -323,12 +348,38 @@ final class RepoMonitorService: ObservableObject {
         return .pushed
     }
 
+    /// Pre-push identity gate: refuses to create a commit when the repo's git
+    /// identity is missing or looks machine-auto-generated (e.g. a `.local` /
+    /// `.lan` hostname email), which would otherwise be published on the commit.
+    /// Returns a block reason, or nil when the identity looks real.
+    private func identityBlock(at path: String) async -> String? {
+        let name = await gitCli.configValue("user.name", in: path)
+        let email = await gitCli.configValue("user.email", in: path)
+
+        if name.isEmpty || email.isEmpty {
+            return "Push blocked: git user.name / user.email is not set. Configure them before pushing."
+        }
+        let lower = email.lowercased()
+        let autoGenerated = !email.contains("@")
+            || lower.contains("(none)")
+            || lower.hasSuffix(".local")
+            || lower.hasSuffix(".lan")
+            || lower.hasSuffix(".localdomain")
+            || lower.hasSuffix("@localhost")
+        if autoGenerated {
+            return "Push blocked: git identity looks auto-generated (\(email)). Set a real user.email before pushing."
+        }
+        return nil
+    }
+
     /// Auto push pass: commits + pushes every repo that is dirty or has unpushed
     /// commits, is not behind remote, fetched cleanly, and wasn't skipped. Runs
     /// after any auto-pull. Returns how many were actually pushed.
     private func autoPushPass(targetPaths: [String]) async -> Int {
         var pushed = 0
         for repoPath in targetPaths {
+            // Leave a repo the user is manually operating on to that operation.
+            guard operations[repoPath] == nil else { continue }
             guard var snapshot = repos.first(where: { normalizePath($0.path) == repoPath }) else { continue }
             guard snapshot.isDirty || snapshot.ahead > 0,
                   snapshot.behind == 0,
@@ -338,23 +389,15 @@ final class RepoMonitorService: ObservableObject {
             progress.currentRepo = snapshot.name
             progress.currentRepoPath = repoPath
             let result = await performPush(at: repoPath)
-            setOperation(nil, for: repoPath)
 
             var outcome: OpOutcome?
             applyPushResult(result, to: &snapshot, outcome: &outcome)
+            upsertRepo(snapshot)
             if case .pushed = result {
                 pushed += 1
-                let dirty = await gitCli.dirtyStatus(in: repoPath)
-                snapshot.isDirty = dirty.isDirty
-                snapshot.modifiedCount = dirty.modified
-                snapshot.untrackedCount = dirty.untracked
-                snapshot.dirtyFiles = dirty.sampleFiles
-                let counts = await gitCli.aheadBehind(in: repoPath)
-                snapshot.ahead = counts.ahead
-                snapshot.behind = counts.behind
-                snapshot.lastScanned = Date()
+                await refreshRepoState(at: repoPath)
             }
-            upsertRepo(snapshot)
+            setOperation(nil, for: repoPath)
         }
         return pushed
     }
@@ -407,11 +450,18 @@ final class RepoMonitorService: ObservableObject {
 
         var notifications: [MonitorNotification] = []
 
+        var autoPulled = 0
         for (index, repoPath) in uniqueTargets.enumerated() {
+            // Skip a repo the user is actively pulling/pushing right now — its own
+            // operation refreshes it; scanning it concurrently would fight over the
+            // same working tree.
+            if operations[repoPath] != nil { continue }
+
             let name = URL(fileURLWithPath: repoPath).lastPathComponent
             progress.current = index + 1
             progress.currentRepo = name
             progress.currentRepoPath = repoPath
+            setOperation(.scanning, for: repoPath)
 
             let previousSnapshot = repos.first(where: { normalizePath($0.path) == repoPath })
             let placeholder = previousSnapshot ?? RepoSnapshot(name: name, path: repoPath)
@@ -423,9 +473,19 @@ final class RepoMonitorService: ObservableObject {
             if !snapshot.isSkipped, let oldSnapshot = oldReposByPath[repoPath] {
                 notifications.append(contentsOf: generateNotifications(old: oldSnapshot, new: snapshot))
             }
+
+            // Inline auto-pull: act on a behind repo the moment it's discovered,
+            // instead of waiting for every other repo to finish scanning.
+            if config.git.autoPullEnabled, isAutoPullEligible(snapshot) {
+                setOperation(.pulling, for: repoPath)
+                if await autoPull(at: repoPath) { autoPulled += 1 }
+            }
+
+            setOperation(nil, for: repoPath)
         }
 
-        let autoPulled = config.git.autoPullEnabled ? await autoPullPass(targetPaths: uniqueTargets) : 0
+        // Push is never automatic during the scan itself; it only runs here when
+        // the user has explicitly enabled auto-push, as a separate pass.
         let autoPushed = config.git.autoPushEnabled ? await autoPushPass(targetPaths: uniqueTargets) : 0
         lastAutoPulled = autoPulled
         lastAutoPushed = autoPushed

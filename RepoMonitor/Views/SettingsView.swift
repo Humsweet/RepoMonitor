@@ -242,7 +242,7 @@ struct SettingsView: View {
                     settingsSection("Push") {
                         settingsToggle("Auto commit & push after scan", isOn: $vm.config.git.autoPushEnabled)
 
-                        Text("When enabled, repos with uncommitted changes (or unpushed commits) that are not behind remote are committed and pushed automatically after each scan. The commit message is written in English by Claude Haiku from the diff. Repos behind remote are skipped (pull first), and the push is aborted if the staged changes look like they contain a secret (e.g. .env, key files, hardcoded tokens).")
+                        Text("When enabled, repos with uncommitted changes (or unpushed commits) that are not behind remote are committed and pushed automatically after each scan. The commit message is written in English by Claude Haiku from the diff. A pre-push check runs first for both manual and automatic pushes and blocks (never pushes) on any problem: behind remote, staged secrets (.env, key files, hardcoded tokens), a missing or auto-generated git identity, or a credential embedded in the remote URL.")
                             .font(.system(size: 11))
                             .foregroundStyle(Theme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)

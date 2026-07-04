@@ -249,7 +249,7 @@ struct DashboardView: View {
             // wins, then scan progress, then the last-scan summary.
             bottomStatus
             Spacer()
-            Text("v1.3.1")
+            Text("v1.3.3")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textTertiary)
 
@@ -282,17 +282,10 @@ struct DashboardView: View {
 
     @ViewBuilder
     private var bottomStatus: some View {
-        if let active = vm.activeOperation {
-            ProgressView()
-                .controlSize(.small)
-                .scaleEffect(0.85)
-                .tint(Theme.accent)
-            Text(operationPhrase(active))
-                .font(.system(size: 14))
-                .foregroundStyle(Theme.textSecondary)
-                .lineLimit(1)
-        } else if vm.progress.isScanning {
-            Text("Scanning: \(vm.progress.currentRepo)")
+        if vm.progress.isScanning {
+            // The determinate bar stays for the whole scan; the label reflects an
+            // inline auto-pull happening on the current repo.
+            Text(scanLabel)
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textSecondary)
                 .lineLimit(1)
@@ -308,6 +301,16 @@ struct DashboardView: View {
             .buttonStyle(.plain)
             .font(.system(size: 14, weight: .medium))
             .foregroundStyle(Theme.statusBehind)
+        } else if let active = vm.activeOperation {
+            // A manual pull/push with no scan running: indeterminate spinner.
+            ProgressView()
+                .controlSize(.small)
+                .scaleEffect(0.85)
+                .tint(Theme.accent)
+            Text(operationPhrase(active))
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.textSecondary)
+                .lineLimit(1)
         } else if let date = vm.lastScanDate {
             Text(lastScanText(date))
                 .font(.system(size: 14))
@@ -315,12 +318,16 @@ struct DashboardView: View {
         }
     }
 
-    /// "Pushing RepoMonitor — writing commit message" for a manual op, or
-    /// "Auto-pushing RepoMonitor …" when the op is running inside a scan pass.
+    private var scanLabel: String {
+        if let op = vm.operations[vm.progress.currentRepoPath], op != .scanning {
+            return "Auto-\(op.verb.lowercased()) \(vm.progress.currentRepo)"
+        }
+        return "Scanning: \(vm.progress.currentRepo)"
+    }
+
+    /// "Pushing RepoMonitor — writing commit message" for a manual op.
     private func operationPhrase(_ active: (name: String, op: RepoOperation)) -> String {
-        let auto = vm.progress.isScanning
-        let verb = auto ? active.op.verb.lowercased() : active.op.verb
-        var phrase = "\(auto ? "Auto-" : "")\(verb) \(active.name)"
+        var phrase = "\(active.op.verb) \(active.name)"
         if !active.op.detail.isEmpty { phrase += " — \(active.op.detail)" }
         return phrase
     }
