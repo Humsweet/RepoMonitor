@@ -73,6 +73,9 @@ final class RepoMonitorService: ObservableObject {
 
     // MARK: - Pull
 
+    // Pull and Push share the same choke-point pattern (performPull / performPush)
+    // so manual and automatic paths behave identically.
+
     /// Manual pull: attempts `git pull --ff-only`, records any failure on the
     /// snapshot's pullError, then rescans the repo to refresh its counts.
     func pullRepo(at path: String) async -> ScanResult {
