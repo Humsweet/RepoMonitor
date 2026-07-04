@@ -45,6 +45,7 @@ final class DashboardViewModel: ObservableObject {
     @Published var sortColumn: RepoSortColumn = .group
     @Published var sortAscending = true
     @Published var pullingPaths: Set<String> = []
+    @Published var pushingPaths: Set<String> = []
 
     /// Network reachability, mirrored from `NetworkMonitor`. Drives the offline
     /// indicator and gates the periodic scan loop.
@@ -129,17 +130,18 @@ final class DashboardViewModel: ObservableObject {
         return true
     }
 
-    /// Runs the action at position `n` (1...6) on `repo`, matching the on-screen
-    /// order of the row's action buttons: 1 Scan · 2 Pull · 3 Finder ·
-    /// 4 VS Code · 5 Terminal · 6 Unwatch.
+    /// Runs the action at position `n` (1...7) on `repo`, matching the on-screen
+    /// order of the row's action buttons: 1 Scan · 2 Pull · 3 Push · 4 Finder ·
+    /// 5 VS Code · 6 Terminal · 7 Unwatch.
     func performRowAction(_ n: Int, on repo: RepoSnapshot) {
         switch n {
         case 1: Task { await scanRepo(repo) }
         case 2: Task { await pullRepo(repo) }
-        case 3: openInFinder(repo)
-        case 4: openInVSCode(repo)
-        case 5: openInTerminal(repo)
-        case 6: requestUnwatch(repo)
+        case 3: Task { await pushRepo(repo) }
+        case 4: openInFinder(repo)
+        case 5: openInVSCode(repo)
+        case 6: openInTerminal(repo)
+        case 7: requestUnwatch(repo)
         default: break
         }
     }
@@ -304,6 +306,13 @@ final class DashboardViewModel: ObservableObject {
         pullingPaths.insert(repo.path)
         defer { pullingPaths.remove(repo.path) }
         _ = await service.pullRepo(at: repo.path)
+    }
+
+    func pushRepo(_ repo: RepoSnapshot) async {
+        guard !progress.isScanning, !pushingPaths.contains(repo.path) else { return }
+        pushingPaths.insert(repo.path)
+        defer { pushingPaths.remove(repo.path) }
+        _ = await service.pushRepo(at: repo.path)
     }
 
     func skipCurrentRepo() {

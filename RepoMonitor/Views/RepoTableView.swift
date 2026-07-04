@@ -41,6 +41,7 @@ struct RepoTableView: View {
                                 repo: repo,
                                 isScanning: vm.progress.isScanning,
                                 isPulling: vm.pullingPaths.contains(repo.path),
+                                isPushing: vm.pushingPaths.contains(repo.path),
                                 isSelected: vm.selectedRepo?.id == repo.id,
                                 onSelect: {
                                     vm.selectedRepo = repo
@@ -48,6 +49,7 @@ struct RepoTableView: View {
                                 },
                                 onScan: { Task { await vm.scanRepo(repo) } },
                                 onPull: { Task { await vm.pullRepo(repo) } },
+                                onPush: { Task { await vm.pushRepo(repo) } },
                                 onOpenTerminal: { vm.openInTerminal(repo) },
                                 onOpenVSCode: { vm.openInVSCode(repo) },
                                 onOpenFinder: { vm.openInFinder(repo) },
@@ -168,10 +170,12 @@ private struct RepoTableRow: View {
     let repo: RepoSnapshot
     let isScanning: Bool
     let isPulling: Bool
+    let isPushing: Bool
     let isSelected: Bool
     let onSelect: () -> Void
     let onScan: () -> Void
     let onPull: () -> Void
+    let onPush: () -> Void
     let onOpenTerminal: () -> Void
     let onOpenVSCode: () -> Void
     let onOpenFinder: () -> Void
@@ -186,6 +190,9 @@ private struct RepoTableRow: View {
 
     private var statusTooltip: String {
         var lines: [String] = ["\(repo.name)  ·  \(repo.path)"]
+        if !repo.pushError.isEmpty {
+            lines.append("⚠ Push failed: \(repo.pushError)")
+        }
         if !repo.pullError.isEmpty {
             lines.append("⚠ Pull failed: \(repo.pullError)")
         }
@@ -262,6 +269,7 @@ private struct RepoTableRow: View {
             HStack(spacing: 1) {
                 ActionButton(icon: "arrow.clockwise", tooltip: "Scan", isEnabled: !isScanning, action: onScan)
                 ActionButton(icon: "arrow.down.to.line", tooltip: "Pull (ff-only)", isEnabled: !isScanning && !isPulling, action: onPull)
+                ActionButton(icon: "arrow.up.to.line", tooltip: "Commit & Push", isEnabled: !isScanning && !isPushing, action: onPush)
                 ActionButton(icon: "folder", tooltip: "Finder", action: onOpenFinder)
                 ActionButton(icon: "chevron.left.forwardslash.chevron.right", tooltip: "VS Code", action: onOpenVSCode)
                 ActionButton(icon: "terminal", tooltip: "Terminal", action: onOpenTerminal)
@@ -293,6 +301,11 @@ private struct RepoTableRow: View {
                 Label("Pull This Repo", systemImage: "arrow.down.to.line")
             }
             .disabled(isScanning || isPulling)
+
+            Button { onPush() } label: {
+                Label("Commit & Push This Repo", systemImage: "arrow.up.to.line")
+            }
+            .disabled(isScanning || isPushing)
 
             Divider()
 

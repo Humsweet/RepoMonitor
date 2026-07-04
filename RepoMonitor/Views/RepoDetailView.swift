@@ -53,6 +53,9 @@ struct RepoDetailView: View {
                 if !repo.pullError.isEmpty {
                     DetailRow(label: "Pull", value: repo.pullError, valueColor: Theme.statusError)
                 }
+                if !repo.pushError.isEmpty {
+                    DetailRow(label: "Push", value: repo.pushError, valueColor: Theme.statusError)
+                }
                 DetailRow(label: "Scanned", value: repo.lastScanned.formatted(.relative(presentation: .named)))
             }
             .padding(16)

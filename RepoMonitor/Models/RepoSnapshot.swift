@@ -18,6 +18,7 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
     var fetchSuccess: Bool = true
     var fetchError: String = ""
     var pullError: String = ""
+    var pushError: String = ""
     var isSkipped: Bool = false
     var lastScanned: Date = .now
 
@@ -36,6 +37,7 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         fetchSuccess: Bool = true,
         fetchError: String = "",
         pullError: String = "",
+        pushError: String = "",
         isSkipped: Bool = false,
         lastScanned: Date = .now
     ) {
@@ -53,6 +55,7 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         self.fetchSuccess = fetchSuccess
         self.fetchError = fetchError
         self.pullError = pullError
+        self.pushError = pushError
         self.isSkipped = isSkipped
         self.lastScanned = lastScanned
     }
@@ -73,6 +76,7 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         fetchSuccess = try container.decodeIfPresent(Bool.self, forKey: .fetchSuccess) ?? true
         fetchError = try container.decodeIfPresent(String.self, forKey: .fetchError) ?? ""
         pullError = try container.decodeIfPresent(String.self, forKey: .pullError) ?? ""
+        pushError = try container.decodeIfPresent(String.self, forKey: .pushError) ?? ""
         isSkipped = try container.decodeIfPresent(Bool.self, forKey: .isSkipped) ?? false
         lastScanned = try container.decodeIfPresent(Date.self, forKey: .lastScanned) ?? .now
     }
@@ -108,9 +112,10 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         return parts.joined(separator: ", ")
     }
 
-    /// Text shown in the Issues column: pull failures first, then fetch
-    /// failures, then the reason the repo is marked dirty.
+    /// Text shown in the Issues column: push failures first, then pull
+    /// failures, then fetch failures, then the reason the repo is marked dirty.
     var issueText: String {
+        if !pushError.isEmpty { return "Push failed: \(pushError)" }
         if !pullError.isEmpty { return "Pull failed: \(pullError)" }
         if !fetchSuccess {
             return fetchError.isEmpty ? "Fetch failed" : "Fetch failed: \(fetchError)"
@@ -119,7 +124,7 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         return ""
     }
     var hasIssue: Bool { !issueText.isEmpty }
-    var issueIsError: Bool { !pullError.isEmpty || !fetchSuccess }
+    var issueIsError: Bool { !pushError.isEmpty || !pullError.isEmpty || !fetchSuccess }
     var remoteDisplay: String { remoteUrl.isEmpty ? "—" : remoteUrl }
     var scannedDisplay: String { lastScanned.formatted(.dateTime.month().day().hour().minute()) }
     var dirtyDisplay: String { isDirty ? "Yes" : "No" }

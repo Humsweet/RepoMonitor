@@ -121,6 +121,68 @@ actor GitCLI {
         }
     }
 
+    func push(
+        in directory: String,
+        remoteURL: String = "",
+        credential: HTTPBasicCredential? = nil
+    ) async -> (success: Bool, error: String) {
+        do {
+            var arguments: [String] = []
+            if let configOverride = Self.fetchAuthorizationConfig(remoteURL: remoteURL, credential: credential) {
+                arguments += ["-c", configOverride]
+            }
+            arguments += ["push"]
+
+            let result = try await run(arguments, in: directory)
+            return (result.success, result.error)
+        } catch {
+            return (false, error.localizedDescription)
+        }
+    }
+
+    // MARK: - Commit primitives (used by the push flow)
+
+    /// Stages every change in the working tree (tracked modifications,
+    /// deletions, and untracked files) via `git add -A`.
+    func stageAll(in directory: String) async -> (success: Bool, error: String) {
+        guard let result = try? await run(["add", "-A"], in: directory) else {
+            return (false, "git add failed")
+        }
+        return (result.success, result.error)
+    }
+
+    /// Unstages everything (`git reset`). Called to roll back after `stageAll`
+    /// when the push is aborted (sensitive content, message generation failure)
+    /// so the working tree is left exactly as it was found.
+    func unstageAll(in directory: String) async {
+        _ = try? await run(["reset"], in: directory)
+    }
+
+    /// Full diff of what is currently staged (`git diff --cached`). Feeds both
+    /// the sensitive-content guard and the commit-message generator.
+    func stagedDiff(in directory: String) async -> String {
+        guard let result = try? await run(["diff", "--cached"], in: directory),
+              result.success else { return "" }
+        return result.output
+    }
+
+    /// Repo-relative paths of currently staged files (`git diff --cached --name-only`).
+    func stagedFiles(in directory: String) async -> [String] {
+        guard let result = try? await run(["diff", "--cached", "--name-only"], in: directory),
+              result.success else { return [] }
+        return result.output
+            .split(separator: "\n")
+            .map { String($0).trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    func commit(message: String, in directory: String) async -> (success: Bool, error: String) {
+        guard let result = try? await run(["commit", "-m", message], in: directory) else {
+            return (false, "git commit failed")
+        }
+        return (result.success, result.error.isEmpty ? result.output : result.error)
+    }
+
     /// Clones `url` into `destination`. Uses a long timeout since clones of
     /// large repos take far longer than a fetch. SSH auth runs in BatchMode, so
     /// the user's existing key/alias setup is honoured without prompts.

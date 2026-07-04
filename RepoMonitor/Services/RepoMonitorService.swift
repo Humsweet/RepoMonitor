@@ -9,6 +9,7 @@ final class RepoMonitorService: ObservableObject {
     @Published var pendingRemoteRepos: [DiscoveredRemoteRepo] = []
 
     private var gitCli: GitCLI
+    private let commitMessageGenerator = CommitMessageGenerator()
     private var config: MonitorConfig
     private var previousState: PersistedState
     private var skipRequestedPath: String?
@@ -154,6 +155,148 @@ final class RepoMonitorService: ObservableObject {
         return error.isEmpty ? "git pull failed" : error
     }
 
+    // MARK: - Push
+
+    /// Manual push: commits any uncommitted changes (with an AI-generated
+    /// message) and pushes, records any failure on the snapshot's pushError,
+    /// then rescans the repo to refresh its counts.
+    func pushRepo(at path: String) async -> ScanResult {
+        let normalizedPath = normalizePath(path)
+        guard !progress.isScanning, isRepoAvailable(at: normalizedPath) else {
+            return makeResult(notifications: [], scannedAt: Date(), duration: 0)
+        }
+
+        let pushError = await performPush(at: normalizedPath)
+        if var snapshot = repos.first(where: { normalizePath($0.path) == normalizedPath }) {
+            snapshot.pushError = pushError
+            upsertRepo(snapshot)
+        }
+
+        return await runScan(targetPaths: [normalizedPath])
+    }
+
+    /// Commits + pushes a single repo. The single choke point for both manual
+    /// and auto push. Returns a decorated error ("" on success or no-op).
+    ///
+    /// Flow: recompute live state → refuse if behind remote → if dirty, stage
+    /// everything, run the sensitive-content guard, generate a message and
+    /// commit → push. Any abort before the push unstages so the working tree is
+    /// left exactly as found.
+    private func performPush(at path: String) async -> String {
+        let dirty = await gitCli.dirtyStatus(in: path)
+        let counts = await gitCli.aheadBehind(in: path)
+
+        // A non-fast-forward push would be rejected; make the user pull first.
+        if counts.behind > 0 {
+            return "Behind remote by \(counts.behind) commit\(counts.behind > 1 ? "s" : ""). Pull first."
+        }
+
+        // Nothing to commit and nothing unpushed — treat as a clean no-op.
+        if !dirty.isDirty && counts.ahead == 0 {
+            return ""
+        }
+
+        if dirty.isDirty {
+            let staged = await gitCli.stageAll(in: path)
+            guard staged.success else {
+                await gitCli.unstageAll(in: path)
+                return staged.error.isEmpty ? "git add failed" : staged.error
+            }
+
+            let stagedFiles = await gitCli.stagedFiles(in: path)
+            let stagedDiff = await gitCli.stagedDiff(in: path)
+
+            if let reason = SensitiveChangeScanner.blockReason(stagedFiles: stagedFiles, stagedDiff: stagedDiff) {
+                await gitCli.unstageAll(in: path)
+                return "Blocked: \(reason). Resolve manually."
+            }
+
+            let message: String
+            do {
+                let repoName = URL(fileURLWithPath: path).lastPathComponent
+                message = try await commitMessageGenerator.generate(diff: stagedDiff, repoName: repoName)
+            } catch CommitMessageGenerator.GenerationError.cliNotFound {
+                await gitCli.unstageAll(in: path)
+                return "Claude CLI not found — cannot generate commit message."
+            } catch {
+                await gitCli.unstageAll(in: path)
+                return "Could not generate commit message (Claude CLI unavailable or offline)."
+            }
+
+            let committed = await gitCli.commit(message: message, in: path)
+            guard committed.success else {
+                await gitCli.unstageAll(in: path)
+                return decoratePushError(committed.error, phase: "commit")
+            }
+        }
+
+        let rawRemoteUrl = await gitCli.originRemoteUrl(in: path)
+        let result = await gitCli.push(
+            in: path,
+            remoteURL: rawRemoteUrl,
+            credential: credential(forRemoteURL: rawRemoteUrl)
+        )
+        guard result.success else { return decoratePushError(result.error, phase: "push") }
+        return ""
+    }
+
+    /// Auto push pass: commits + pushes every repo that is dirty or has unpushed
+    /// commits, is not behind remote, fetched cleanly, and wasn't skipped. Only
+    /// called when autoPushEnabled is on, and after any auto-pull has run so
+    /// freshly-pulled repos are no longer behind.
+    private func autoPushPass(targetPaths: [String]) async {
+        for repoPath in targetPaths {
+            guard var snapshot = repos.first(where: { normalizePath($0.path) == repoPath }) else { continue }
+            guard snapshot.isDirty || snapshot.ahead > 0,
+                  snapshot.behind == 0,
+                  snapshot.fetchSuccess,
+                  !snapshot.isSkipped else { continue }
+
+            progress.currentRepo = snapshot.name
+            progress.currentRepoPath = repoPath
+
+            snapshot.pushError = await performPush(at: repoPath)
+            if snapshot.pushError.isEmpty {
+                let dirty = await gitCli.dirtyStatus(in: repoPath)
+                snapshot.isDirty = dirty.isDirty
+                snapshot.modifiedCount = dirty.modified
+                snapshot.untrackedCount = dirty.untracked
+                snapshot.dirtyFiles = dirty.sampleFiles
+                let counts = await gitCli.aheadBehind(in: repoPath)
+                snapshot.ahead = counts.ahead
+                snapshot.behind = counts.behind
+                snapshot.lastScanned = Date()
+            }
+            upsertRepo(snapshot)
+        }
+    }
+
+    /// Shared decoration for commit/push stderr into a concise, actionable line.
+    private func decoratePushError(_ error: String, phase: String) -> String {
+        if error.localizedCaseInsensitiveContains("non-fast-forward")
+            || error.localizedCaseInsensitiveContains("fetch first")
+            || error.localizedCaseInsensitiveContains("rejected") {
+            return "Push rejected: remote has new commits. Pull first."
+        }
+        if error.localizedCaseInsensitiveContains("no upstream")
+            || error.localizedCaseInsensitiveContains("has no upstream branch") {
+            return "Current branch has no upstream configured."
+        }
+        if error.localizedCaseInsensitiveContains("authentication failed")
+            || error.localizedCaseInsensitiveContains("could not read")
+            || error.localizedCaseInsensitiveContains("permission denied") {
+            return "Authentication failed. Add a saved credential in Settings."
+        }
+        if error.localizedCaseInsensitiveContains("please tell me who you are")
+            || error.localizedCaseInsensitiveContains("empty ident") {
+            return "Git user.name / user.email not configured for this repo."
+        }
+        if error.localizedCaseInsensitiveContains("nothing to commit") {
+            return "Nothing to commit."
+        }
+        return error.isEmpty ? "git \(phase) failed" : error
+    }
+
     private func runScan(targetPaths: [String], discoverRemotes: Bool = false) async -> ScanResult {
         guard !progress.isScanning else {
             return makeResult(notifications: [], scannedAt: Date(), duration: 0)
@@ -196,6 +339,10 @@ final class RepoMonitorService: ObservableObject {
 
         if config.git.autoPullEnabled {
             await autoPullPass(targetPaths: uniqueTargets)
+        }
+
+        if config.git.autoPushEnabled {
+            await autoPushPass(targetPaths: uniqueTargets)
         }
 
         repos = sortRepos(repos)
@@ -317,6 +464,10 @@ final class RepoMonitorService: ObservableObject {
         if snapshot.behind == 0 {
             // Repo caught up (pulled here or elsewhere) — stale pull errors no longer apply.
             snapshot.pullError = ""
+        }
+        if !snapshot.isDirty && snapshot.ahead == 0 {
+            // Nothing left to commit or push — any prior push error is stale.
+            snapshot.pushError = ""
         }
         snapshot.lastScanned = Date()
         return snapshot

@@ -58,6 +58,12 @@ struct RootEntry: Codable, Identifiable {
 
 struct GitConfig: Codable {
     var autoPullEnabled: Bool = false
+    /// When on, dirty repos (or repos with unpushed commits) that are not behind
+    /// remote are committed with an AI-generated English message and pushed
+    /// automatically after each scan. Skips repos behind remote and aborts if the
+    /// staged changes trip the sensitive-content guard. Defaults off — push is a
+    /// manual, per-repo action unless the user opts in.
+    var autoPushEnabled: Bool = false
     /// When on, a pull that advances RepoMonitor's own source with build-affecting
     /// changes rebuilds and relaunches the app automatically. Only ever acts on
     /// RepoMonitor itself. Defaults on; an escape hatch for users who want manual
@@ -70,11 +76,13 @@ struct GitConfig: Codable {
 
     init(
         autoPullEnabled: Bool = false,
+        autoPushEnabled: Bool = false,
         selfUpdateEnabled: Bool = true,
         hostCredentials: [GitHostCredential] = [],
         ignoredRemoteRepos: [String] = []
     ) {
         self.autoPullEnabled = autoPullEnabled
+        self.autoPushEnabled = autoPushEnabled
         self.selfUpdateEnabled = selfUpdateEnabled
         self.hostCredentials = hostCredentials
         self.ignoredRemoteRepos = ignoredRemoteRepos
@@ -83,6 +91,7 @@ struct GitConfig: Codable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         autoPullEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoPullEnabled) ?? false
+        autoPushEnabled = try container.decodeIfPresent(Bool.self, forKey: .autoPushEnabled) ?? false
         selfUpdateEnabled = try container.decodeIfPresent(Bool.self, forKey: .selfUpdateEnabled) ?? true
         hostCredentials = try container.decodeIfPresent([GitHostCredential].self, forKey: .hostCredentials) ?? []
         ignoredRemoteRepos = try container.decodeIfPresent([String].self, forKey: .ignoredRemoteRepos) ?? []

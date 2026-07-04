@@ -238,6 +238,16 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
+                    // Push section
+                    settingsSection("Push") {
+                        settingsToggle("Auto commit & push after scan", isOn: $vm.config.git.autoPushEnabled)
+
+                        Text("When enabled, repos with uncommitted changes (or unpushed commits) that are not behind remote are committed and pushed automatically after each scan. The commit message is written in English by Claude Haiku from the diff. Repos behind remote are skipped (pull first), and the push is aborted if the staged changes look like they contain a secret (e.g. .env, key files, hardcoded tokens).")
+                            .font(.system(size: 11))
+                            .foregroundStyle(Theme.textTertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+
                     settingsSection("Git Credentials") {
                         Text("Save one HTTPS username + token per Git host. Tokens are stored in macOS Keychain, not in config.json.")
                             .font(.system(size: 11))

@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// Keyboard-focus regions on the dashboard. Arrow keys move focus between the
-/// search field and the repo list; ⌘1–⌘6 only act while the list is focused.
+/// search field and the repo list; ⌘1–⌘7 only act while the list is focused.
 enum DashboardFocus: Hashable {
     case search
     case list
@@ -60,7 +60,7 @@ struct DashboardView: View {
                 .keyboardShortcut("f", modifiers: .command)
                 .hidden()
         )
-        // ⌘1–⌘6 fire the selected row's action buttons by position, but only
+        // ⌘1–⌘7 fire the selected row's action buttons by position, but only
         // while the list is focused. Hidden shortcut buttons deliver Command
         // combos reliably (unlike `.onKeyPress`), and reading `focus` in the
         // action keeps them scoped to the list.
@@ -226,10 +226,10 @@ struct DashboardView: View {
         .frame(maxHeight: .infinity)
     }
 
-    // MARK: - Row Action Shortcuts (⌘1–⌘6)
+    // MARK: - Row Action Shortcuts (⌘1–⌘7)
 
     private var rowActionShortcuts: some View {
-        let keys: [KeyEquivalent] = ["1", "2", "3", "4", "5", "6"]
+        let keys: [KeyEquivalent] = ["1", "2", "3", "4", "5", "6", "7"]
         return ForEach(Array(keys.enumerated()), id: \.offset) { index, key in
             Button("") {
                 guard focus == .list, let repo = vm.selectedRepo else { return }
@@ -270,7 +270,7 @@ struct DashboardView: View {
                     .foregroundStyle(Theme.textTertiary)
             }
             Spacer()
-            Text("v1.2.3")
+            Text("v1.3.0")
                 .font(.system(size: 14))
                 .foregroundStyle(Theme.textTertiary)
 
