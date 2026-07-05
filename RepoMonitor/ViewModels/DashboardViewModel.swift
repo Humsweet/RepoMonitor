@@ -225,9 +225,6 @@ final class DashboardViewModel: ObservableObject {
             .sink { [weak self] result in
                 self?.lastScanDate = result.scannedAt
                 self?.scanDuration = result.duration
-
-                // Send notifications
-                NotificationService.shared.sendBatch(result.notifications)
             }
             .store(in: &cancellables)
 
@@ -408,13 +405,18 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func saveConfig() {
+        // Guard the scan interval at the one place it's persisted: 0 would spin
+        // the timer. Clamp before anything downstream sees the value.
+        config.desktop.scanIntervalMinutes = max(1, config.desktop.scanIntervalMinutes)
+
         try? ConfigLoader.saveConfig(config)
         service.updateConfig(config)
         lastScanDate = service.persistedLastScanDate
 
-        // Restart timer with new interval
-        stopPeriodicScan()
-        startPeriodicScan()
+        // Re-arm the periodic timer so a changed scan interval takes effect.
+        // Deliberately does NOT kick a scan — settings now apply immediately, so
+        // this runs on every toggle flip and must stay cheap.
+        if isOnline { armScanTimer() }
     }
 
     /// Requests unwatching `repo`, surfacing a confirmation dialog first since

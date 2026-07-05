@@ -127,50 +127,6 @@ struct SettingsView: View {
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
-                    // Notifications section
-                    settingsSection("Notifications") {
-                        settingsToggle("Enable notifications", isOn: $vm.config.notifications.enabled)
-
-                        if vm.config.notifications.enabled {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Notification mode")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(Theme.textSecondary)
-
-                                Picker("", selection: $vm.config.notifications.mode) {
-                                    Text("Errors only").tag(NotificationConfig.NotifyMode.errors)
-                                    Text("Behind").tag(NotificationConfig.NotifyMode.behind)
-                                    Text("Behind + Dirty").tag(NotificationConfig.NotifyMode.behindAndDirty)
-                                }
-                                .pickerStyle(.segmented)
-                                .labelsHidden()
-                            }
-
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text("Minimum interval (minutes)")
-                                    .font(.system(size: 12, weight: .medium))
-                                    .foregroundStyle(Theme.textSecondary)
-
-                                HStack {
-                                    TextField("", value: $vm.config.notifications.minimumIntervalMinutes, format: .number)
-                                        .font(.system(size: 12, design: .monospaced))
-                                        .textFieldStyle(.plain)
-                                        .foregroundStyle(Theme.textPrimary)
-                                        .padding(.horizontal, 8)
-                                        .padding(.vertical, 6)
-                                        .background(Theme.bgCard)
-                                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                                        .overlay(
-                                            RoundedRectangle(cornerRadius: 4)
-                                                .stroke(Theme.border, lineWidth: 1)
-                                        )
-                                        .frame(width: 80)
-                                    Spacer()
-                                }
-                            }
-                        }
-                    }
-
                     // Scanning section
                     settingsSection("Scanning") {
                         VStack(alignment: .leading, spacing: 8) {
@@ -192,6 +148,9 @@ struct SettingsView: View {
                                             .stroke(Theme.border, lineWidth: 1)
                                     )
                                     .frame(width: 80)
+                                    // Apply on commit; the panel's onDisappear is the
+                                    // catch-all if the user closes without pressing Return.
+                                    .onSubmit { vm.saveConfig() }
                                 Spacer()
                             }
                         }
@@ -205,7 +164,7 @@ struct SettingsView: View {
                                 .font(.system(size: 12, weight: .medium))
                                 .foregroundStyle(Theme.textSecondary)
 
-                            Picker("", selection: $vm.config.desktop.terminalAppID) {
+                            Picker("", selection: applied($vm.config.desktop.terminalAppID)) {
                                 Text("Not set").tag("")
                                 ForEach(installed) { app in
                                     Text(app.name).tag(app.id)
@@ -223,14 +182,14 @@ struct SettingsView: View {
 
                     // Pull section
                     settingsSection("Pull") {
-                        settingsToggle("Auto pull after scan", isOn: $vm.config.git.autoPullEnabled)
+                        settingsToggle("Auto pull after scan", isOn: applied($vm.config.git.autoPullEnabled))
 
                         Text("When enabled, repos that are behind with a clean working tree and no unpushed commits are pulled automatically (fast-forward only) after each scan.")
                             .font(.system(size: 11))
                             .foregroundStyle(Theme.textTertiary)
                             .fixedSize(horizontal: false, vertical: true)
 
-                        settingsToggle("Auto-update RepoMonitor", isOn: $vm.config.git.selfUpdateEnabled)
+                        settingsToggle("Auto-update RepoMonitor", isOn: applied($vm.config.git.selfUpdateEnabled))
 
                         Text("When RepoMonitor's own repository is pulled and the changes affect the built app (Swift sources, Package.swift, build scripts, assets), it rebuilds and relaunches automatically. The previous version is archived and deleted 30 days after the new one has been running.")
                             .font(.system(size: 11))
@@ -240,7 +199,7 @@ struct SettingsView: View {
 
                     // Push section
                     settingsSection("Push") {
-                        settingsToggle("Auto commit & push after scan", isOn: $vm.config.git.autoPushEnabled)
+                        settingsToggle("Auto commit & push after scan", isOn: applied($vm.config.git.autoPushEnabled))
 
                         Text("When enabled, repos with uncommitted changes (or unpushed commits) that are not behind remote are committed and pushed automatically after each scan. The commit message is written in English by Claude Haiku from the diff. A pre-push check runs first for both manual and automatic pushes and blocks (never pushes) on any problem: behind remote, staged secrets (.env, key files, hardcoded tokens), a missing or auto-generated git identity, or a credential embedded in the remote URL.")
                             .font(.system(size: 11))
@@ -444,51 +403,22 @@ struct SettingsView: View {
                 }
                 .padding(20)
             }
-
-            Divider().background(Theme.border)
-
-            // Save button
-            HStack {
-                Spacer()
-                Button {
-                    dismiss()
-                } label: {
-                    Text("Cancel")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Theme.textSecondary)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 7)
-                        .background(Theme.bgCard)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6)
-                                .stroke(Theme.border, lineWidth: 1)
-                        )
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    vm.saveConfig()
-                    dismiss()
-                } label: {
-                    Text("Save")
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 7)
-                        .background(Theme.accent)
-                        .clipShape(RoundedRectangle(cornerRadius: 6))
-                }
-                .buttonStyle(.plain)
-            }
-            .padding(20)
         }
         .frame(width: 480, height: 620)
         .background(Theme.bg)
         .preferredColorScheme(theme.mode.colorScheme)
+        // Settings apply immediately (no Save button), so persist any control —
+        // notably a typed-but-not-submitted scan interval — when the panel closes.
+        .onDisappear { vm.saveConfig() }
     }
 
     // MARK: - Helpers
+
+    /// Wraps a config-backed binding so every change persists immediately — the
+    /// panel has no Save button, so each control applies the moment it changes.
+    private func applied<T>(_ binding: Binding<T>) -> Binding<T> {
+        Binding(get: { binding.wrappedValue }, set: { binding.wrappedValue = $0; vm.saveConfig() })
+    }
 
     @ViewBuilder
     private func settingsSection(_ title: String, @ViewBuilder content: () -> some View) -> some View {
@@ -500,19 +430,31 @@ struct SettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 content()
             }
+            // Pin every section card to the full panel width so the card never
+            // shrinks to its content — otherwise a section holding only a short
+            // toggle collapses to a small block while one with a long caption or
+            // a segmented picker stretches wide.
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(14)
             .cardStyle()
         }
     }
 
     private func settingsToggle(_ label: String, isOn: Binding<Bool>) -> some View {
-        Toggle(isOn: isOn) {
+        // A bare `Toggle` with a label just centres the label+switch pair when
+        // stretched, so lay it out by hand: label leading, Spacer, switch
+        // trailing. Switches then align in one column down the panel's edge.
+        HStack {
             Text(label)
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(Theme.textPrimary)
+            Spacer()
+            Toggle("", isOn: isOn)
+                .labelsHidden()
+                .toggleStyle(.switch)
+                .tint(Theme.accent)
         }
-        .toggleStyle(.switch)
-        .tint(Theme.accent)
+        .frame(maxWidth: .infinity)
     }
 
     private func settingsTextField(_ placeholder: String, text: Binding<String>) -> some View {

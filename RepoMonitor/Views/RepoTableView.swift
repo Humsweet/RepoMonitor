@@ -109,7 +109,7 @@ private struct RepoTableHeader: View {
                 .frame(minWidth: Col.repoMin, maxWidth: .infinity, alignment: .leading)
             SortableHeader(title: "Sync", column: .sync, vm: vm)
                 .frame(width: Col.sync, alignment: .leading)
-            SortableHeader(title: "Issues", column: .issue, vm: vm)
+            SortableHeader(title: "Status", column: .issue, vm: vm)
                 .frame(width: Col.issues, alignment: .leading)
             SortableHeader(title: "Last scan", column: .scanned, vm: vm)
                 .frame(width: Col.scan, alignment: .leading)
@@ -224,8 +224,11 @@ private struct RepoTableRow: View {
     }
 
     private var issueTooltip: String {
-        var lines = [repo.issueText]
-        if !repo.issueIsError, !repo.dirtyFiles.isEmpty {
+        // Lead with the full, uncategorised git message (the short chip is only
+        // the distilled headline); fall back to the chip text for dirty/info.
+        let headline = repo.issueDetail.isEmpty ? repo.issueText : repo.issueDetail
+        var lines = [headline]
+        if repo.issueSeverity == .info, !repo.dirtyFiles.isEmpty {
             lines.append(contentsOf: repo.dirtyFiles.map { "  \($0)" })
             let remaining = repo.modifiedCount + repo.untrackedCount - repo.dirtyFiles.count
             if remaining > 0 { lines.append("  …and \(remaining) more") }
@@ -257,15 +260,15 @@ private struct RepoTableRow: View {
             SyncCell(ahead: repo.ahead, behind: repo.behind)
                 .frame(width: Col.sync, alignment: .leading)
 
-            // Issues — in-progress phase wins, then a fading outcome, then the
-            // usual failure/attention/dirty pill.
+            // Status — in-progress phase wins, then a fading outcome, then the
+            // failure/attention/info pill (or a quiet all-clear check).
             Group {
                 if let operation {
                     ProgressPill(text: operation.chip)
                 } else if let recentOutcome {
                     OutcomePill(outcome: recentOutcome)
                 } else if repo.hasIssue {
-                    IssuePill(text: repo.issueText, isError: repo.issueIsError)
+                    IssuePill(text: repo.issueText, severity: repo.issueSeverity)
                         .help(issueTooltip)
                 } else {
                     IssuePill.empty
@@ -395,58 +398,80 @@ private struct SyncCell: View {
     }
 }
 
+/// Status-column pill whose loudness tracks severity: red/amber *filled*
+/// capsules for real failures and safe-stops, quiet unstyled text for normal
+/// local edits (info), and a near-invisible check for the all-clear majority —
+/// so the common "everything's fine" state adds no visual noise to the table.
 private struct IssuePill: View {
     let text: String
-    let isError: Bool
+    let severity: IssueSeverity
 
-    static let empty = IssuePill(text: "", isError: false, isEmpty: true)
+    static let empty = IssuePill(text: "", severity: .clean, isEmpty: true)
 
     private var isEmpty = false
 
-    init(text: String, isError: Bool) {
+    init(text: String, severity: IssueSeverity) {
         self.text = text
-        self.isError = isError
+        self.severity = severity
     }
 
-    private init(text: String, isError: Bool, isEmpty: Bool) {
+    private init(text: String, severity: IssueSeverity, isEmpty: Bool) {
         self.text = text
-        self.isError = isError
+        self.severity = severity
         self.isEmpty = isEmpty
     }
 
-    private var tint: Color { isError ? Theme.statusError : Theme.statusDirty }
+    private var tint: Color {
+        switch severity {
+        case .error: return Theme.statusError
+        case .attention: return Theme.statusDirty
+        case .info: return Theme.textSecondary
+        case .clean: return Theme.textTertiary
+        }
+    }
+
+    private var icon: String {
+        switch severity {
+        case .error: return "exclamationmark.octagon"
+        case .attention: return "exclamationmark.triangle"
+        case .info: return "pencil"
+        case .clean: return "checkmark"
+        }
+    }
 
     var body: some View {
         if isEmpty {
-            HStack(spacing: 4) {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 9, weight: .semibold))
-                Text("—")
-                    .font(.system(size: 11))
-            }
-            .foregroundStyle(Theme.textTertiary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .overlay(
-                Capsule().stroke(Theme.border, lineWidth: 0.5)
-            )
+            // All clear: the quietest possible mark, no capsule — it appears on
+            // most rows, so it must recede.
+            Image(systemName: "checkmark")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(Theme.textTertiary.opacity(0.55))
+        } else if severity == .info {
+            // Normal local changes are information, not a warning: quiet text,
+            // no fill, no border — never competes with a real issue.
+            label
+                .foregroundStyle(tint)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
         } else {
-            HStack(spacing: 4) {
-                Image(systemName: isError ? "exclamationmark.octagon" : "exclamationmark.triangle")
-                    .font(.system(size: 9, weight: .semibold))
-                Text(text.replacingOccurrences(of: "\n", with: " "))
-                    .font(.system(size: 11))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            .foregroundStyle(tint)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 2)
-            .background(tint.opacity(0.12))
-            .overlay(
-                Capsule().stroke(tint.opacity(0.3), lineWidth: 0.5)
-            )
-            .clipShape(Capsule())
+            label
+                .foregroundStyle(tint)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                .background(tint.opacity(0.12))
+                .overlay(Capsule().stroke(tint.opacity(0.3), lineWidth: 0.5))
+                .clipShape(Capsule())
+        }
+    }
+
+    private var label: some View {
+        HStack(spacing: 4) {
+            Image(systemName: icon)
+                .font(.system(size: 9, weight: .semibold))
+            Text(text.replacingOccurrences(of: "\n", with: " "))
+                .font(.system(size: 11))
+                .lineLimit(1)
+                .truncationMode(.tail)
         }
     }
 }
@@ -502,7 +527,7 @@ private struct ActionButton: View {
 }
 
 /// Neutral, accent-tinted "operation in progress" pill with a live spinner,
-/// shown in the Issues column so a running pull/push reads as activity — never
+/// shown in the Status column so a running pull/push reads as activity — never
 /// as a failure.
 private struct ProgressPill: View {
     let text: String

@@ -47,12 +47,6 @@ final class NotificationService: NSObject, UNUserNotificationCenterDelegate {
         }
     }
 
-    func sendBatch(_ notifications: [MonitorNotification]) {
-        for notification in notifications {
-            send(notification)
-        }
-    }
-
     // Show notifications even when app is in foreground
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,

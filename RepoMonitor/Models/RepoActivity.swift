@@ -19,7 +19,9 @@ enum RepoOperation: Equatable {
         }
     }
 
-    /// Short label for the in-progress chip in the Issues column.
+    /// Short label for the in-progress chip in the Status column. Each push
+    /// sub-step keeps its own label — surfacing exactly which phase is running
+    /// (staging → secret-scan → commit message → commit → push) is the point.
     var chip: String {
         switch self {
         case .scanning: return "Scanning…"

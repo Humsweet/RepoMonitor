@@ -53,7 +53,7 @@ final class RepoMonitorService: ObservableObject {
         let normalizedPath = normalizePath(path)
         repos.removeAll { normalizePath($0.path) == normalizedPath }
         repos = sortRepos(repos)
-        persistCurrentState(lastScanDate: previousState.lastScanDate, lastNotificationDate: previousState.lastNotificationDate)
+        persistCurrentState(lastScanDate: previousState.lastScanDate)
     }
 
     // MARK: - Scan
@@ -68,7 +68,7 @@ final class RepoMonitorService: ObservableObject {
 
         guard isRepoAvailable(at: normalizedPath) else {
             removeRepo(at: normalizedPath)
-            return makeResult(notifications: [], scannedAt: Date(), duration: 0)
+            return makeResult(scannedAt: Date(), duration: 0)
         }
 
         if repos.first(where: { normalizePath($0.path) == normalizedPath }) == nil {
@@ -124,21 +124,6 @@ final class RepoMonitorService: ObservableObject {
         upsertRepo(s)
     }
 
-    /// Sends one informational summary notification after an auto pass acted, so
-    /// the user learns their repos were synced even with the window closed.
-    private func notifyAutoSummary(pulled: Int, pushed: Int) {
-        guard config.notifications.enabled else { return }
-        var parts: [String] = []
-        if pushed > 0 { parts.append("pushed \(pushed) repo\(pushed > 1 ? "s" : "")") }
-        if pulled > 0 { parts.append("pulled \(pulled) repo\(pulled > 1 ? "s" : "")") }
-        guard !parts.isEmpty else { return }
-        NotificationService.shared.send(MonitorNotification(
-            repoName: "Auto sync",
-            message: "Auto-\(parts.joined(separator: ", "))",
-            level: .info
-        ))
-    }
-
     // MARK: Pull
 
     /// Manual pull: fast-forwards the repo, records the result, then rescans to
@@ -166,7 +151,7 @@ final class RepoMonitorService: ObservableObject {
 
         await refreshRepoState(at: normalizedPath)
         setOperation(nil, for: normalizedPath)
-        persistCurrentState(lastScanDate: previousState.lastScanDate, lastNotificationDate: previousState.lastNotificationDate)
+        persistCurrentState(lastScanDate: previousState.lastScanDate)
         return outcome
     }
 
@@ -256,7 +241,7 @@ final class RepoMonitorService: ObservableObject {
 
         await refreshRepoState(at: normalizedPath)
         setOperation(nil, for: normalizedPath)
-        persistCurrentState(lastScanDate: previousState.lastScanDate, lastNotificationDate: previousState.lastNotificationDate)
+        persistCurrentState(lastScanDate: previousState.lastScanDate)
         return outcome
     }
 
@@ -430,25 +415,22 @@ final class RepoMonitorService: ObservableObject {
 
     private func runScan(targetPaths: [String], discoverRemotes: Bool = false) async -> ScanResult {
         guard !progress.isScanning else {
-            return makeResult(notifications: [], scannedAt: Date(), duration: 0)
+            return makeResult(scannedAt: Date(), duration: 0)
         }
 
         pruneUnavailableRepos()
 
         let uniqueTargets = Array(Set(targetPaths.map(normalizePath))).filter { isRepoAvailable(at: $0) }
         guard !uniqueTargets.isEmpty else {
-            let result = makeResult(notifications: [], scannedAt: Date(), duration: 0)
+            let result = makeResult(scannedAt: Date(), duration: 0)
             lastResult = result
             return result
         }
 
         let startTime = Date()
-        let oldReposByPath = Dictionary(uniqueKeysWithValues: previousState.repos.map { (normalizePath($0.path), $0) })
         skipRequestedPath = nil
         progress = ScanProgress(isScanning: true)
         progress.total = uniqueTargets.count
-
-        var notifications: [MonitorNotification] = []
 
         var autoPulled = 0
         for (index, repoPath) in uniqueTargets.enumerated() {
@@ -470,10 +452,6 @@ final class RepoMonitorService: ObservableObject {
             let snapshot = await scanSnapshot(for: repoPath, previous: placeholder)
             upsertRepo(snapshot)
 
-            if !snapshot.isSkipped, let oldSnapshot = oldReposByPath[repoPath] {
-                notifications.append(contentsOf: generateNotifications(old: oldSnapshot, new: snapshot))
-            }
-
             // Inline auto-pull: act on a behind repo the moment it's discovered,
             // instead of waiting for every other repo to finish scanning.
             if config.git.autoPullEnabled, isAutoPullEligible(snapshot) {
@@ -489,22 +467,13 @@ final class RepoMonitorService: ObservableObject {
         let autoPushed = config.git.autoPushEnabled ? await autoPushPass(targetPaths: uniqueTargets) : 0
         lastAutoPulled = autoPulled
         lastAutoPushed = autoPushed
-        if autoPulled > 0 || autoPushed > 0 {
-            notifyAutoSummary(pulled: autoPulled, pushed: autoPushed)
-        }
 
         repos = sortRepos(repos)
 
-        let filtered = filterNotifications(notifications)
-        let throttled = throttleNotifications(filtered)
         let scannedAt = Date()
-        persistCurrentState(
-            lastScanDate: scannedAt,
-            lastNotificationDate: throttled.isEmpty ? previousState.lastNotificationDate : scannedAt
-        )
+        persistCurrentState(lastScanDate: scannedAt)
 
         let result = makeResult(
-            notifications: throttled,
             scannedAt: scannedAt,
             duration: Date().timeIntervalSince(startTime)
         )
@@ -670,7 +639,7 @@ final class RepoMonitorService: ObservableObject {
         }
 
         repos = sorted
-        persistCurrentState(lastScanDate: previousState.lastScanDate, lastNotificationDate: previousState.lastNotificationDate)
+        persistCurrentState(lastScanDate: previousState.lastScanDate)
     }
 
     private func isRepoAvailable(at path: String) -> Bool {
@@ -688,11 +657,10 @@ final class RepoMonitorService: ObservableObject {
 
     // MARK: - State
 
-    private func persistCurrentState(lastScanDate: Date?, lastNotificationDate: Date?) {
+    private func persistCurrentState(lastScanDate: Date?) {
         let state = PersistedState(
             repos: sortRepos(repos),
-            lastScanDate: lastScanDate,
-            lastNotificationDate: lastNotificationDate
+            lastScanDate: lastScanDate
         )
         ConfigLoader.saveState(state, config: config)
         previousState = state
@@ -728,69 +696,11 @@ final class RepoMonitorService: ObservableObject {
         return true
     }
 
-    // MARK: - Notification Generation
-
-    private func generateNotifications(old: RepoSnapshot, new: RepoSnapshot) -> [MonitorNotification] {
-        var notes: [MonitorNotification] = []
-
-        if !new.fetchSuccess && old.fetchSuccess {
-            notes.append(MonitorNotification(
-                repoName: new.name,
-                message: "Fetch failed: \(new.fetchError)",
-                level: .error
-            ))
-        }
-
-        if new.behind > old.behind {
-            notes.append(MonitorNotification(
-                repoName: new.name,
-                message: "\(new.behind) commit(s) behind upstream",
-                level: .warning
-            ))
-        }
-
-        if new.isDirty && !old.isDirty {
-            notes.append(MonitorNotification(
-                repoName: new.name,
-                message: "Working tree has uncommitted changes",
-                level: .info
-            ))
-        }
-
-        return notes
-    }
-
-    private func filterNotifications(_ notifications: [MonitorNotification]) -> [MonitorNotification] {
-        guard config.notifications.enabled else { return [] }
-        switch config.notifications.mode {
-        case .errors:
-            return notifications.filter { $0.level == .error }
-        case .behind:
-            return notifications.filter { $0.level >= .warning }
-        case .behindAndDirty:
-            return notifications
-        }
-    }
-
-    private func throttleNotifications(_ notifications: [MonitorNotification]) -> [MonitorNotification] {
-        guard !notifications.isEmpty else { return [] }
-        let interval = TimeInterval(config.notifications.minimumIntervalMinutes * 60)
-        if let lastDate = previousState.lastNotificationDate,
-           Date().timeIntervalSince(lastDate) < interval {
-            return []
-        }
-        if let top = notifications.max(by: { $0.level < $1.level }) {
-            return [top]
-        }
-        return []
-    }
-
     // MARK: - Helpers
 
-    private func makeResult(notifications: [MonitorNotification], scannedAt: Date, duration: TimeInterval) -> ScanResult {
+    private func makeResult(scannedAt: Date, duration: TimeInterval) -> ScanResult {
         ScanResult(
             repos: repos,
-            notifications: notifications,
             scannedAt: scannedAt,
             duration: duration
         )

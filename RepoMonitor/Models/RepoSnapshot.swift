@@ -103,12 +103,18 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
     /// Combined divergence used for the merged Sync column sort.
     var syncMagnitude: Int { ahead + behind }
 
-    /// Severity used for sorting the Issues column: error > attention > none.
-    var issueRank: Int {
-        if issueIsError { return 2 }
-        if hasIssue { return 1 }
-        return 0
+    /// How loudly the Status column should speak: a real failure (red) outranks
+    /// an actionable safe-stop (amber), which outranks purely informational
+    /// local edits (neutral). Normal uncommitted work is *not* a warning.
+    var issueSeverity: IssueSeverity {
+        if !pushError.isEmpty || !pullError.isEmpty || !fetchSuccess { return .error }
+        if !pushBlock.isEmpty { return .attention }
+        if isDirty { return .info }
+        return .clean
     }
+
+    /// Sort key for the Status column: error > attention > info > clean.
+    var issueRank: Int { issueSeverity.rawValue }
 
     /// Short summary of why the repo is dirty, e.g. "2 modified, 1 untracked".
     var dirtySummary: String {
@@ -119,23 +125,55 @@ struct RepoSnapshot: Identifiable, Codable, Equatable {
         return parts.joined(separator: ", ")
     }
 
-    /// Text shown in the Issues column. Real failures (red) first, then the
-    /// amber "push blocked — needs your attention" notice, then fetch failures,
-    /// then the reason the repo is marked dirty.
+    /// Glance-level label for the Status column. Raw git stderr is *categorised*
+    /// into a human reason ("Rejected: remote ahead", "Auth failed", …) so the
+    /// chip is legible at a glance; the full stderr lives in the tooltip
+    /// (`issueDetail`). Order mirrors `issueSeverity`.
     var issueText: String {
-        if !pushError.isEmpty { return "Push failed: \(pushError)" }
-        if !pullError.isEmpty { return "Pull failed: \(pullError)" }
+        if !pushError.isEmpty { return Self.gitLabel(action: "Push", raw: pushError) }
+        if !pullError.isEmpty { return Self.gitLabel(action: "Pull", raw: pullError) }
         if !pushBlock.isEmpty { return pushBlock }
-        if !fetchSuccess {
-            return fetchError.isEmpty ? "Fetch failed" : "Fetch failed: \(fetchError)"
-        }
+        if !fetchSuccess { return Self.gitLabel(action: "Fetch", raw: fetchError) }
         if isDirty { return dirtySummary }
         return ""
     }
+
+    /// Full, uncategorised detail for the tooltip — the raw git message the
+    /// short `issueText` was distilled from. Empty for the info/clean states.
+    var issueDetail: String {
+        if !pushError.isEmpty { return pushError }
+        if !pullError.isEmpty { return pullError }
+        if !pushBlock.isEmpty { return pushBlock }
+        if !fetchSuccess { return fetchError }
+        return ""
+    }
+
     var hasIssue: Bool { !issueText.isEmpty }
     /// Red "failure" styling. `pushBlock` is deliberately excluded — it's a safe
     /// stop rendered as amber attention, not an error.
-    var issueIsError: Bool { !pushError.isEmpty || !pullError.isEmpty || !fetchSuccess }
+    var issueIsError: Bool { issueSeverity == .error }
+
+    /// Map raw git stderr onto a short, human reason. Falls back to a plain
+    /// "<action> failed" when the failure doesn't match a known pattern.
+    private static func gitLabel(action: String, raw: String) -> String {
+        let s = raw.lowercased()
+        if s.contains("non-fast-forward") || s.contains("fetch first")
+            || s.contains("rejected") || s.contains("failed to push some refs") {
+            return "Rejected: remote ahead"
+        }
+        if s.contains("authentication") || s.contains("could not read username")
+            || s.contains("permission denied") || s.contains("publickey")
+            || s.contains("403") || s.contains("401") {
+            return "Auth failed"
+        }
+        if s.contains("could not resolve host") || s.contains("unable to access")
+            || s.contains("timed out") || s.contains("timeout")
+            || s.contains("connection") {
+            return "Network error"
+        }
+        if s.contains("conflict") { return "Merge conflict" }
+        return "\(action) failed"
+    }
     var remoteDisplay: String { remoteUrl.isEmpty ? "—" : remoteUrl }
     var scannedDisplay: String { lastScanned.formatted(.dateTime.month().day().hour().minute()) }
     var dirtyDisplay: String { isDirty ? "Yes" : "No" }
@@ -177,11 +215,21 @@ enum StatusLevel: Int, Comparable, Codable {
     }
 }
 
+/// How the Status column should read a repo's state. Deliberately separates
+/// "informational" (normal local edits) from "attention" (a safe stop that
+/// needs the user) and "error" (a real failure) so normal work never wears a
+/// warning colour.
+enum IssueSeverity: Int {
+    case clean = 0
+    case info = 1
+    case attention = 2
+    case error = 3
+}
+
 // MARK: - Scan Result
 
 struct ScanResult {
     let repos: [RepoSnapshot]
-    let notifications: [MonitorNotification]
     let scannedAt: Date
     let duration: TimeInterval
 
@@ -220,7 +268,6 @@ struct MonitorNotification: Identifiable {
 struct PersistedState: Codable {
     var repos: [RepoSnapshot]
     var lastScanDate: Date?
-    var lastNotificationDate: Date?
 }
 
 // MARK: - Scan Progress
