@@ -66,6 +66,14 @@ actor CommitMessageGenerator {
         env["PATH"] = (extraPaths + [existing]).joined(separator: ":")
         process.environment = env
 
+        // Pin the child to a dedicated working directory. Claude Code records a
+        // transcript under `~/.claude/projects/<cwd>` even in headless `-p` mode;
+        // without this the process inherits the app's cwd (typically `/` for a
+        // Finder-launched app), scattering these throwaway commit-message runs
+        // into the root project folder. A stable, recognisable directory keeps
+        // them isolated so tooling can filter them out by path.
+        process.currentDirectoryURL = Self.commitMessageWorkingDirectory()
+
         let stdout = Pipe()
         let stderr = Pipe()
         process.standardOutput = stdout
@@ -108,6 +116,18 @@ actor CommitMessageGenerator {
         let trimSet = CharacterSet(charactersIn: "`\"'")
         line = line.trimmingCharacters(in: trimSet)
         return line
+    }
+
+    // MARK: - Working directory
+
+    /// A dedicated, stable working directory for the headless `claude` process,
+    /// living alongside RepoMonitor's other state under `~/.config/repo-monitor/`.
+    /// Created on demand so the process launch never fails on a missing cwd.
+    private static func commitMessageWorkingDirectory() -> URL {
+        let dir = URL(fileURLWithPath: NSHomeDirectory())
+            .appendingPathComponent(".config/repo-monitor/commit-msg", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
     }
 
     // MARK: - Locate binary
