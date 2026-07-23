@@ -295,8 +295,8 @@ struct DashboardView: View {
             Text("\(vm.progress.current)/\(vm.progress.total)")
                 .font(.system(size: 14, design: .monospaced))
                 .foregroundStyle(Theme.textTertiary)
-            Button("Skip Current") {
-                vm.skipCurrentRepo()
+            Button("Stop Scan") {
+                vm.cancelScan()
             }
             .buttonStyle(.plain)
             .font(.system(size: 14, weight: .medium))

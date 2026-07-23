@@ -400,8 +400,8 @@ final class DashboardViewModel: ObservableObject {
         return (true, "Push \(repo.ahead) unpushed commit\(repo.ahead > 1 ? "s" : "")")
     }
 
-    func skipCurrentRepo() {
-        service.requestSkipCurrentRepo()
+    func cancelScan() {
+        service.cancelScan()
     }
 
     func saveConfig() {

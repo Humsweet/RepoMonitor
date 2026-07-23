@@ -84,8 +84,8 @@ struct MenuBarView: View {
                     Task { await vm.scan() }
                 }
                 if vm.progress.isScanning {
-                    MenuBarButton(title: "Skip Current Repo", icon: "forward") {
-                        vm.skipCurrentRepo()
+                    MenuBarButton(title: "Stop Scan", icon: "stop") {
+                        vm.cancelScan()
                     }
                 }
                 MenuBarButton(title: "Edit Config", icon: "gear") {

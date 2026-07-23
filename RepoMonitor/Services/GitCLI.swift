@@ -7,7 +7,11 @@ actor GitCLI {
     }
 
     private let timeoutSeconds: Int
-    private var currentProcess: Process?
+    /// Every git subprocess currently in flight, keyed by identity. A single
+    /// slot could only represent one process, so parallel scans need the whole
+    /// set — both to avoid clobbering the field and to terminate them all at
+    /// once when the user hits "Stop Scan".
+    private var runningProcesses: [ObjectIdentifier: Process] = [:]
 
     init(timeoutSeconds: Int = 30) {
         self.timeoutSeconds = timeoutSeconds
@@ -41,46 +45,64 @@ actor GitCLI {
         process.standardOutput = stdout
         process.standardError = stderr
 
-        currentProcess = process
-
         do {
             try process.run()
         } catch {
-            currentProcess = nil
             throw error
         }
 
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
+        let key = ObjectIdentifier(process)
+        runningProcesses[key] = process
+        defer { runningProcesses[key] = nil }
+
+        // Drain both pipes on background queues *while the process runs*, so a
+        // large amount of output can never fill the ~64 KB OS pipe buffer and
+        // deadlock the child (which would then hang until the timeout kills it).
+        // The old code read only inside the termination handler; that was safe
+        // only because fetch/pull output is small — concurrent scans make big
+        // output far likelier, so we drain continuously instead.
+        async let outData = Self.readToEnd(stdout.fileHandleForReading)
+        async let errData = Self.readToEnd(stderr.fileHandleForReading)
+
+        let exitCode: Int32 = try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, Error>) in
                 let timeoutTask = Task {
-                    try await Task.sleep(for: .seconds(effectiveTimeout))
-                    if process.isRunning {
-                        process.terminate()
-                    }
+                    try? await Task.sleep(for: .seconds(effectiveTimeout))
+                    if process.isRunning { process.terminate() }
                 }
-
-                process.terminationHandler = { [weak stdout, weak stderr] process in
+                process.terminationHandler = { process in
                     timeoutTask.cancel()
-
-                    let outData = stdout?.fileHandleForReading.readDataToEndOfFile() ?? Data()
-                    let errData = stderr?.fileHandleForReading.readDataToEndOfFile() ?? Data()
-                    let result = GitResult(
-                        output: String(data: outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-                        error: String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
-                        exitCode: process.terminationStatus
-                    )
-
-                    Task { await self.clearCurrentProcess(process) }
-                    continuation.resume(returning: result)
+                    continuation.resume(returning: process.terminationStatus)
                 }
             }
         } onCancel: {
             process.terminate()
         }
+
+        return GitResult(
+            output: String(data: await outData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            error: String(data: await errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+            exitCode: exitCode
+        )
     }
 
-    func terminateCurrentProcess() {
-        currentProcess?.terminate()
+    /// Reads a pipe to EOF on a background queue. `readDataToEndOfFile` blocks
+    /// until the child closes its write end (i.e. exits), but drains the buffer
+    /// continuously as bytes arrive — so it never back-pressures the child.
+    /// `nonisolated` so the blocking read runs off the actor.
+    private nonisolated static func readToEnd(_ handle: FileHandle) async -> Data {
+        await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .utility).async {
+                let data = handle.readDataToEndOfFile()
+                continuation.resume(returning: data)
+            }
+        }
+    }
+
+    /// Terminates every in-flight git subprocess. Used by "Stop Scan" to abort a
+    /// parallel scan at once instead of waiting for each fetch to finish.
+    func terminateAllRunning() {
+        for process in runningProcesses.values { process.terminate() }
     }
 
     func fetch(
@@ -355,9 +377,4 @@ actor GitCLI {
         return "http.\(sanitized).extraHeader=Authorization: Basic \(auth)"
     }
 
-    private func clearCurrentProcess(_ process: Process) {
-        if currentProcess === process {
-            currentProcess = nil
-        }
-    }
 }

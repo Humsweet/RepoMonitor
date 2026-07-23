@@ -22,7 +22,14 @@ final class RepoMonitorService: ObservableObject {
     private let commitMessageGenerator = CommitMessageGenerator()
     private var config: MonitorConfig
     private var previousState: PersistedState
-    private var skipRequestedPath: String?
+    /// Set when the user hits "Stop Scan". Every in-flight and pending repo then
+    /// resolves to a skipped snapshot instead of a fetch error, and the scan loop
+    /// stops scheduling new work. Reset at the start of each scan.
+    private var scanCancelRequested = false
+    /// Max git fetches/pulls running at once during a scan. Bounded so a parallel
+    /// scan never spawns an unbounded number of git processes (memory) or trips
+    /// remote rate limits; 8 keeps most of the speedup while staying safe.
+    private let maxConcurrentScans = 8
     private var isDiscoveringRemotes = false
 
     var persistedLastScanDate: Date? { previousState.lastScanDate }
@@ -43,10 +50,14 @@ final class RepoMonitorService: ObservableObject {
         pruneUnavailableRepos()
     }
 
-    func requestSkipCurrentRepo() {
-        guard progress.isScanning, !progress.currentRepoPath.isEmpty else { return }
-        skipRequestedPath = progress.currentRepoPath
-        Task { await gitCli.terminateCurrentProcess() }
+    /// Aborts an in-progress scan: stops scheduling new repos and terminates
+    /// every git subprocess currently in flight. In-flight repos resolve to
+    /// skipped (not errored) snapshots. With a parallel scan there is no single
+    /// "current" repo to skip, so the action cancels the whole scan.
+    func cancelScan() {
+        guard progress.isScanning else { return }
+        scanCancelRequested = true
+        Task { await gitCli.terminateAllRunning() }
     }
 
     func removeRepo(at path: String) {
@@ -428,38 +439,44 @@ final class RepoMonitorService: ObservableObject {
         }
 
         let startTime = Date()
-        skipRequestedPath = nil
+        scanCancelRequested = false
         progress = ScanProgress(isScanning: true)
         progress.total = uniqueTargets.count
 
+        // Parallel scan with bounded concurrency. Each repo runs the same
+        // scan-then-maybe-auto-pull work as before, but up to `maxConcurrentScans`
+        // run at once so the git network waits overlap. Every state mutation hops
+        // back to this @MainActor, so there are no data races on `repos` /
+        // `operations` / `progress` — only the git I/O itself runs concurrently.
         var autoPulled = 0
-        for (index, repoPath) in uniqueTargets.enumerated() {
-            // Skip a repo the user is actively pulling/pushing right now — its own
-            // operation refreshes it; scanning it concurrently would fight over the
-            // same working tree.
-            if operations[repoPath] != nil { continue }
+        var completed = 0
+        var pending = uniqueTargets.makeIterator()
 
-            let name = URL(fileURLWithPath: repoPath).lastPathComponent
-            progress.current = index + 1
-            progress.currentRepo = name
-            progress.currentRepoPath = repoPath
-            setOperation(.scanning, for: repoPath)
+        await withTaskGroup(of: Bool.self) { group in
+            var inFlight = 0
 
-            let previousSnapshot = repos.first(where: { normalizePath($0.path) == repoPath })
-            let placeholder = previousSnapshot ?? RepoSnapshot(name: name, path: repoPath)
-            upsertRepo(placeholder)
-
-            let snapshot = await scanSnapshot(for: repoPath, previous: placeholder)
-            upsertRepo(snapshot)
-
-            // Inline auto-pull: act on a behind repo the moment it's discovered,
-            // instead of waiting for every other repo to finish scanning.
-            if config.git.autoPullEnabled, isAutoPullEligible(snapshot) {
-                setOperation(.pulling, for: repoPath)
-                if await autoPull(at: repoPath) { autoPulled += 1 }
+            // Prime the group up to the concurrency cap. A repo the user is
+            // actively pulling/pushing is left to that operation — scanning it
+            // concurrently would fight over the same working tree.
+            while inFlight < maxConcurrentScans, !scanCancelRequested, let repoPath = pending.next() {
+                if operations[repoPath] != nil { continue }
+                inFlight += 1
+                group.addTask { await self.scanOne(repoPath) }
             }
 
-            setOperation(nil, for: repoPath)
+            // As each repo finishes, backfill its slot with the next pending repo.
+            for await didPull in group {
+                inFlight -= 1
+                completed += 1
+                if didPull { autoPulled += 1 }
+                progress.current = completed
+
+                while inFlight < maxConcurrentScans, !scanCancelRequested, let repoPath = pending.next() {
+                    if operations[repoPath] != nil { continue }
+                    inFlight += 1
+                    group.addTask { await self.scanOne(repoPath) }
+                }
+            }
         }
 
         // Push is never automatic during the scan itself; it only runs here when
@@ -520,6 +537,36 @@ final class RepoMonitorService: ObservableObject {
     /// (the caller persists the ignore decision in config).
     func dismissRemoteRepo(id: String) {
         pendingRemoteRepos.removeAll { $0.id == id }
+    }
+
+    /// Scans one repo (placeholder → snapshot) and, if eligible, auto-pulls it
+    /// inline. Runs on the main actor, but its internal git awaits release the
+    /// actor so sibling `scanOne` calls overlap on the git I/O. Returns true if
+    /// it actually pulled.
+    private func scanOne(_ repoPath: String) async -> Bool {
+        let name = URL(fileURLWithPath: repoPath).lastPathComponent
+        // Surface *a* live repo in the status line. With several in flight this
+        // reflects the most recently started one rather than a single cursor.
+        progress.currentRepo = name
+        progress.currentRepoPath = repoPath
+        setOperation(.scanning, for: repoPath)
+
+        let previousSnapshot = repos.first(where: { normalizePath($0.path) == repoPath })
+        let placeholder = previousSnapshot ?? RepoSnapshot(name: name, path: repoPath)
+        upsertRepo(placeholder)
+
+        let snapshot = await scanSnapshot(for: repoPath, previous: placeholder)
+        upsertRepo(snapshot)
+
+        var didPull = false
+        // Inline auto-pull: act on a behind repo the moment it's discovered.
+        if config.git.autoPullEnabled, isAutoPullEligible(snapshot), !scanCancelRequested {
+            setOperation(.pulling, for: repoPath)
+            if await autoPull(at: repoPath) { didPull = true }
+        }
+
+        setOperation(nil, for: repoPath)
+        return didPull
     }
 
     private func scanSnapshot(for path: String, previous: RepoSnapshot) async -> RepoSnapshot {
@@ -682,18 +729,18 @@ final class RepoMonitorService: ObservableObject {
         snapshot.isSkipped = true
         snapshot.fetchSuccess = true
         snapshot.fetchError = ""
-        skipRequestedPath = nil
         return snapshot
     }
 
+    /// True once the user has hit "Stop Scan" — every repo then short-circuits to
+    /// a skipped snapshot. `path` is unused now that cancel is all-or-nothing, but
+    /// kept so the call sites in `scanSnapshot` read unchanged.
     private func shouldSkip(_ path: String) -> Bool {
-        normalizePath(skipRequestedPath ?? "") == normalizePath(path)
+        scanCancelRequested
     }
 
     private func consumeSkip(for path: String) -> Bool {
-        guard shouldSkip(path) else { return false }
-        skipRequestedPath = nil
-        return true
+        scanCancelRequested
     }
 
     // MARK: - Helpers
